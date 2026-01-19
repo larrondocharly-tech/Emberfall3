@@ -1,0 +1,23 @@
+[
+  {
+    "id": "fighter",
+    "name": "Guerrier",
+    "baseHp": 14,
+    "baseDex": 2,
+    "movePoints": 5
+  },
+  {
+    "id": "rogue",
+    "name": "Voleur",
+    "baseHp": 10,
+    "baseDex": 4,
+    "movePoints": 6
+  },
+  {
+    "id": "mage",
+    "name": "Mage",
+    "baseHp": 8,
+    "baseDex": 3,
+    "movePoints": 4
+  }
+]
