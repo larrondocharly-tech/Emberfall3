@@ -1,0 +1,19 @@
+{
+  "name": "emberfall3",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev --workspace apps/server\" \"npm:dev --workspace apps/client\"",
+    "build": "npm run build --workspace packages/shared && npm run build --workspace apps/server && npm run build --workspace apps/client",
+    "lint": "npm run lint --workspace apps/client && npm run lint --workspace apps/server",
+    "start": "npm run start --workspace apps/server"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.4.5"
+  }
+}
