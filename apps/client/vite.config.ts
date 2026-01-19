@@ -9,6 +9,11 @@ export default defineConfig({
         target: "http://localhost:2567",
         ws: true,
         changeOrigin: true
+      },
+      // Optional fallback if a backend exposes /matchmake without the /colyseus prefix.
+      "/matchmake": {
+        target: "http://localhost:2567",
+        changeOrigin: true
       }
     }
   }
