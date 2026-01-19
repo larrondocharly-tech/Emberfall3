@@ -4,7 +4,7 @@ import { DATA_BASE } from "../config";
 type DataResource = "races" | "classes" | "spells" | "monsters";
 
 export async function fetchJson<T>(resource: DataResource): Promise<T> {
-  const url = `${DATA_BASE}/${resource}`;
+  const url = `${DATA_BASE}/${resource}.json`;
   console.info(`[data] fetch ${url}`);
 
   const response = await fetch(url, {
@@ -17,7 +17,7 @@ export async function fetchJson<T>(resource: DataResource): Promise<T> {
   if (!response.ok) {
     const details = await response.text().catch(() => "");
     const suffix = details ? ` :: ${details}` : "";
-    throw new Error(`Serveur data indisponible (${response.status}) pour ${url}${suffix}`);
+    throw new Error(`Impossible de charger les données locales (${response.status}) pour ${url}${suffix}`);
   }
 
   return (await response.json()) as T;

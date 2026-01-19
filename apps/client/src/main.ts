@@ -415,25 +415,35 @@ async function loadData() {
 }
 
 async function createRoom() {
-  const name = playerNameInput.value.trim() || "MJ";
-  const raceId = raceSelect.value || "human";
-  const classId = classSelect.value || "fighter";
-  room = await client.joinOrCreate("vtt", { name, raceId, classId });
-  enterRoom(room);
-  roomInfo.textContent = `Code de room : ${room.id}`;
+  try {
+    const name = playerNameInput.value.trim() || "MJ";
+    const raceId = raceSelect.value || "human";
+    const classId = classSelect.value || "fighter";
+    room = await client.joinOrCreate("vtt", { name, raceId, classId });
+    enterRoom(room);
+    roomInfo.textContent = `Code de room : ${room.id}`;
+  } catch (error) {
+    console.error("Failed to create room:", error);
+    roomInfo.textContent = "Serveur de jeu indisponible (Colyseus non lancé).";
+  }
 }
 
 async function joinRoom() {
-  const name = playerNameInput.value.trim() || "Aventurier";
-  const raceId = raceSelect.value || "human";
-  const classId = classSelect.value || "fighter";
-  const code = roomCodeInput.value.trim();
-  if (!code) {
-    roomInfo.textContent = "Entrez un code.";
-    return;
+  try {
+    const name = playerNameInput.value.trim() || "Aventurier";
+    const raceId = raceSelect.value || "human";
+    const classId = classSelect.value || "fighter";
+    const code = roomCodeInput.value.trim();
+    if (!code) {
+      roomInfo.textContent = "Entrez un code.";
+      return;
+    }
+    room = await client.joinById(code, { name, raceId, classId });
+    enterRoom(room);
+  } catch (error) {
+    console.error("Failed to join room:", error);
+    roomInfo.textContent = "Serveur de jeu indisponible (Colyseus non lancé).";
   }
-  room = await client.joinById(code, { name, raceId, classId });
-  enterRoom(room);
 }
 
 function enterRoom(activeRoom: Room<any>) {
@@ -445,15 +455,11 @@ function enterRoom(activeRoom: Room<any>) {
 }
 
 createRoomBtn.addEventListener("click", () => {
-  createRoom().catch((error) => {
-    roomInfo.textContent = `Erreur: ${error.message}`;
-  });
+  void createRoom();
 });
 
 joinRoomBtn.addEventListener("click", () => {
-  joinRoom().catch((error) => {
-    roomInfo.textContent = `Erreur: ${error.message}`;
-  });
+  void joinRoom();
 });
 
 spawnMonsterBtn.addEventListener("click", () => {
@@ -504,9 +510,9 @@ chatInput.addEventListener("keydown", (event) => {
 
 setStatus("En attente de connexion...");
 
-loadData().catch(() => {
-  roomInfo.textContent =
-    "Serveur data indisponible. Vérifiez que le serveur tourne sur http://localhost:2567.";
+loadData().catch((error) => {
+  console.error("Failed to load local data:", error);
+  roomInfo.textContent = "Impossible de charger les données locales.";
 });
 
 void game;
