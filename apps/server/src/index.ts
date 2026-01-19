@@ -1,14 +1,21 @@
-import Phaser from "phaser";
-import { Client, Room } from "colyseus.js";
-import type { ClassData, MonsterData, RaceData, SpellData } from "@emberfall3/shared";
-import { WS_BASE } from "./config";
+import { createServer } from "http";
+import express from "express";
+import cors from "cors";
+import { Server, Room, Client } from "colyseus";
+import { WebSocketTransport } from "@colyseus/ws-transport";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import type {
+  ClassData,
+  MapObstacle,
+  MonsterData,
+  PlayerMode,
+  RaceData,
+  SpellData,
+  Vector2
+} from "@emberfall3/shared";
 
-const SERVER_URL = WS_BASE;
-const WORLD_WIDTH = 1024;
-const WORLD_HEIGHT = 768;
-const TILE_SIZE = 64;
-
-type PlayerSchema = {
+type PlayerState = {
   id: string;
   name: string;
   raceId: string;
@@ -17,34 +24,31 @@ type PlayerSchema = {
   hp: number;
   maxHp: number;
   isGM: boolean;
-  mode: string;
+  mode: PlayerMode;
   tokenId: string;
 };
 
-type TokenSchema = {
+type TokenState = {
   id: string;
   name: string;
   ownerId: string;
-  type: string;
+  type: "player" | "monster";
   x: number;
   y: number;
-  gridX: number;
-  gridY: number;
-  movePoints: number;
-  maxMovePoints: number;
+  targetX: number;
+  targetY: number;
+  dex: number;
   hp: number;
   maxHp: number;
+  movePoints: number;
+  maxMovePoints: number;
+  gridX: number;
+  gridY: number;
 };
 
-type ObstacleSchema = {
-  id: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
+type ObstacleState = MapObstacle;
 
-type CombatStateSchema = {
+type CombatState = {
   active: boolean;
   turnIndex: number;
   turnOrder: string[];
@@ -55,467 +59,443 @@ type CombatStateSchema = {
   originY: number;
 };
 
-type GameStateSchema = {
-  players: Record<string, PlayerSchema>;
-  tokens: Record<string, TokenSchema>;
-  obstacles: ObstacleSchema[];
-  combat: CombatStateSchema;
+type GameState = {
+  obstacles: ObstacleState[];
+  players: Record<string, PlayerState>;
+  tokens: Record<string, TokenState>;
+  combat: CombatState;
+  turn: number;
 };
 
-const lobby = document.getElementById("lobby") as HTMLDivElement;
-const createRoomBtn = document.getElementById("createRoom") as HTMLButtonElement;
-const joinRoomBtn = document.getElementById("joinRoom") as HTMLButtonElement;
-const playerNameInput = document.getElementById("playerName") as HTMLInputElement;
-const roomCodeInput = document.getElementById("roomCode") as HTMLInputElement;
-const roomInfo = document.getElementById("roomInfo") as HTMLDivElement;
-const statusText = document.getElementById("status") as HTMLDivElement;
-const gmPanel = document.getElementById("gmPanel") as HTMLDivElement;
-const monsterSelect = document.getElementById("monsterSelect") as HTMLSelectElement;
-const spawnMonsterBtn = document.getElementById("spawnMonster") as HTMLButtonElement;
-const startCombatBtn = document.getElementById("startCombat") as HTMLButtonElement;
-const toggleGridBtn = document.getElementById("toggleGrid") as HTMLButtonElement;
-const spellSelect = document.getElementById("spellSelect") as HTMLSelectElement;
-const castSpellBtn = document.getElementById("castSpell") as HTMLButtonElement;
-const rollD20Btn = document.getElementById("rollD20") as HTMLButtonElement;
-const rollAttackBtn = document.getElementById("rollAttack") as HTMLButtonElement;
-const rollSkillBtn = document.getElementById("rollSkill") as HTMLButtonElement;
-const combatPanel = document.getElementById("combatPanel") as HTMLDivElement;
-const combatTurn = document.getElementById("combatTurn") as HTMLDivElement;
-const turnOrder = document.getElementById("turnOrder") as HTMLDivElement;
-const endTurnBtn = document.getElementById("endTurn") as HTMLButtonElement;
-const chatLog = document.getElementById("chatLog") as HTMLDivElement;
-const chatInput = document.getElementById("chatInput") as HTMLInputElement;
-const raceSelect = document.getElementById("raceSelect") as HTMLSelectElement;
-const classSelect = document.getElementById("classSelect") as HTMLSelectElement;
+const SPEED = 180;
 
-const client = new Client(SERVER_URL);
-let room: Room<any> | null = null;
-let sessionId: string | null = null;
-let gridVisible = true;
-let races: RaceData[] = [];
-let classes: ClassData[] = [];
-let spells: SpellData[] = [];
-let monsters: MonsterData[] = [];
-let lastPointer = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
+class VttRoom extends Room<GameState> {
+  private races: RaceData[] = [];
+  private classes: ClassData[] = [];
+  private spells: SpellData[] = [];
+  private monsters: MonsterData[] = [];
+  private gmId = "";
 
-class GameScene extends Phaser.Scene {
-  private tokenSprites = new Map<string, Phaser.GameObjects.Arc>();
-  private nameLabels = new Map<string, Phaser.GameObjects.Text>();
-  private gridGraphics?: Phaser.GameObjects.Graphics;
-  private combatGridGraphics?: Phaser.GameObjects.Graphics;
-  private obstacleGraphics?: Phaser.GameObjects.Graphics;
-  private dragging = false;
-  private dragStart = { x: 0, y: 0 };
-
-  constructor() {
-    super("GameScene");
-  }
-
-  create() {
-    /**
-     * ✅ ULTRA IMPORTANT
-     * Désactive le menu contextuel côté Phaser Input.
-     * Sans ça, pointer.rightButtonDown() peut ne jamais être pris.
-     */
-    this.input.mouse?.disableContextMenu();
-
-    this.createTilemap();
-
-    this.gridGraphics = this.add.graphics();
-    this.combatGridGraphics = this.add.graphics();
-    this.obstacleGraphics = this.add.graphics();
-
-    this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
-      lastPointer = { x: pointer.worldX, y: pointer.worldY };
-      if (this.dragging) {
-        const dx = pointer.x - this.dragStart.x;
-        const dy = pointer.y - this.dragStart.y;
-        this.cameras.main.scrollX -= dx / this.cameras.main.zoom;
-        this.cameras.main.scrollY -= dy / this.cameras.main.zoom;
-        this.dragStart = { x: pointer.x, y: pointer.y };
-      }
+  onCreate() {
+    this.setState({
+      obstacles: [],
+      players: {},
+      tokens: {},
+      combat: {
+        active: false,
+        turnIndex: 0,
+        turnOrder: [],
+        activeTokenId: "",
+        gridSize: 8,
+        gridCellSize: 64,
+        originX: 120,
+        originY: 80
+      },
+      turn: 0
     });
 
-    this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
-      // 0 = gauche, 1 = milieu, 2 = droit
-      console.log("POINTER DOWN button =", pointer.button);
+    console.log("VttRoom created");
 
-      if (pointer.middleButtonDown()) {
-        this.dragging = true;
-        this.dragStart = { x: pointer.x, y: pointer.y };
+    try {
+      this.loadData();
+    } catch (error) {
+      console.error("Failed to load data:", error);
+      this.races = [];
+      this.classes = [];
+      this.spells = [];
+      this.monsters = [];
+    }
+    this.seedObstacles();
+
+    this.setSimulationInterval((deltaTime) => this.update(deltaTime));
+
+    this.onMessage("move", (client, payload: { x: number; y: number }) => {
+      const player = this.state.players[client.sessionId];
+      if (!player || player.mode !== "exploration") {
         return;
       }
+      const token = this.state.tokens[player.tokenId];
+      if (!token) {
+        return;
+      }
+      token.targetX = payload.x;
+      token.targetY = payload.y;
+    });
 
-      if (!room || !room.state) return;
-
-      const state = room.state as GameStateSchema;
-      const combat = state.combat as CombatStateSchema;
-
-      if (pointer.rightButtonDown()) {
-        if (combat?.active) {
-          const gridX = Math.floor((pointer.worldX - combat.originX) / combat.gridCellSize);
-          const gridY = Math.floor((pointer.worldY - combat.originY) / combat.gridCellSize);
-          room.send("combat_move", { gridX, gridY });
-        } else {
-          room.send("move", { x: pointer.worldX, y: pointer.worldY });
+    this.onMessage(
+      "combat_move",
+      (client, payload: { gridX: number; gridY: number }) => {
+        const player = this.state.players[client.sessionId];
+        if (!player || !this.state.combat.active || player.mode !== "combat") {
+          return;
         }
+        if (this.state.combat.activeTokenId !== player.tokenId) {
+          return;
+        }
+        const token = this.state.tokens[player.tokenId];
+        if (!token) {
+          return;
+        }
+        const distance =
+          Math.abs(payload.gridX - token.gridX) +
+          Math.abs(payload.gridY - token.gridY);
+        if (distance > token.movePoints) {
+          return;
+        }
+        if (
+          payload.gridX < 0 ||
+          payload.gridY < 0 ||
+          payload.gridX >= this.state.combat.gridSize ||
+          payload.gridY >= this.state.combat.gridSize
+        ) {
+          return;
+        }
+        token.gridX = payload.gridX;
+        token.gridY = payload.gridY;
+        token.movePoints -= distance;
+        token.x =
+          this.state.combat.originX +
+          payload.gridX * this.state.combat.gridCellSize +
+          this.state.combat.gridCellSize / 2;
+        token.y =
+          this.state.combat.originY +
+          payload.gridY * this.state.combat.gridCellSize +
+          this.state.combat.gridCellSize / 2;
       }
-    });
+    );
 
-    this.input.on("pointerup", () => {
-      this.dragging = false;
-    });
-
-    this.input.on("wheel", (_pointer, _gameObjects, _deltaX, deltaY) => {
-      const zoom = Phaser.Math.Clamp(this.cameras.main.zoom - deltaY * 0.001, 0.6, 1.6);
-      this.cameras.main.setZoom(zoom);
-    });
-
-    endTurnBtn.addEventListener("click", () => {
-      room?.send("end_turn", {});
-    });
-  }
-
-  update() {
-    if (!room || !room.state) return;
-
-    const state = room.state as GameStateSchema;
-    const obstacles = Array.isArray(state.obstacles) ? state.obstacles : [];
-    const tokens = state.tokens ?? {};
-
-    this.renderObstacles(obstacles);
-    this.renderTokens(tokens);
-    this.renderGrid();
-    this.renderCombatGrid(state.combat as CombatStateSchema);
-  }
-
-  private createTilemap() {
-    const colors = [0x0f172a, 0x1e293b];
-    for (let y = 0; y < WORLD_HEIGHT; y += TILE_SIZE) {
-      for (let x = 0; x < WORLD_WIDTH; x += TILE_SIZE) {
-        const index = (x / TILE_SIZE + y / TILE_SIZE) % 2;
-        this.add
-          .rectangle(x + TILE_SIZE / 2, y + TILE_SIZE / 2, TILE_SIZE, TILE_SIZE, colors[index])
-          .setOrigin(0.5);
+    this.onMessage("end_turn", (client) => {
+      const player = this.state.players[client.sessionId];
+      if (!player || !this.state.combat.active || player.mode !== "combat") {
+        return;
       }
-    }
-  }
+      if (this.state.combat.activeTokenId !== player.tokenId) {
+        return;
+      }
+      this.state.combat.turnIndex =
+        (this.state.combat.turnIndex + 1) % this.state.combat.turnOrder.length;
+      const nextTokenId = this.state.combat.turnOrder[this.state.combat.turnIndex];
+      const nextToken = this.state.tokens[nextTokenId];
+      if (nextToken) {
+        nextToken.movePoints = nextToken.maxMovePoints;
+      }
+      this.state.combat.activeTokenId = nextTokenId;
+    });
 
-  private renderGrid() {
-    if (!this.gridGraphics) return;
-    this.gridGraphics.clear();
-    if (!gridVisible) return;
+    this.onMessage("spawn_monster", (client, payload: { monsterId: string }) => {
+      const player = this.state.players[client.sessionId];
+      if (!player || !player.isGM) {
+        return;
+      }
+      const monster = this.monsters.find((entry) => entry.id === payload.monsterId);
+      if (!monster) {
+        return;
+      }
+      this.spawnMonsterToken(monster);
+    });
 
-    this.gridGraphics.lineStyle(1, 0x334155, 0.6);
-    for (let x = 0; x <= WORLD_WIDTH; x += TILE_SIZE) this.gridGraphics.lineBetween(x, 0, x, WORLD_HEIGHT);
-    for (let y = 0; y <= WORLD_HEIGHT; y += TILE_SIZE) this.gridGraphics.lineBetween(0, y, WORLD_WIDTH, y);
-  }
+    this.onMessage("start_combat", (client) => {
+      const player = this.state.players[client.sessionId];
+      if (!player || !player.isGM) {
+        return;
+      }
+      this.startCombat();
+    });
 
-  private renderCombatGrid(combat: CombatStateSchema) {
-    if (!this.combatGridGraphics) return;
+    this.onMessage("chat", (client, payload: { text: string }) => {
+      const player = this.state.players[client.sessionId];
+      if (!player) {
+        return;
+      }
+      const message = `[${player.name}] ${payload.text.slice(0, 200)}`;
+      this.broadcast("chat", { message });
+    });
 
-    this.combatGridGraphics.clear();
-    if (!combat?.active) {
-      combatPanel.style.display = "none";
-      return;
-    }
-    combatPanel.style.display = "flex";
+    this.onMessage("roll", (client, payload: { kind: "d20" | "attack" | "skill" }) => {
+      const player = this.state.players[client.sessionId];
+      if (!player) {
+        return;
+      }
+      const roll = Math.floor(Math.random() * 20) + 1;
+      const bonus = payload.kind === "attack" ? 2 : payload.kind === "skill" ? 1 : 0;
+      const total = roll + bonus;
+      const label = payload.kind === "d20" ? "d20" : payload.kind === "attack" ? "Attack" : "Skill";
+      this.broadcast("roll_result", {
+        message: `${player.name} lance ${label}: ${roll} + ${bonus} = ${total}`
+      });
+    });
 
-    const current = combat.activeTokenId;
-    const currentLabel = current === getOwnTokenId() ? "Vous" : current;
-    combatTurn.textContent = `Tour: ${currentLabel}`;
-
-    const order = combat.turnOrder
-      .map((id) => resolveTokenName(id))
-      .map((name, index) => `${index + 1}. ${name}`)
-      .join("<br />");
-    turnOrder.innerHTML = order;
-
-    this.combatGridGraphics.lineStyle(1, 0x64748b, 0.9);
-
-    for (let x = 0; x <= combat.gridSize; x += 1) {
-      const startX = combat.originX + x * combat.gridCellSize;
-      this.combatGridGraphics.lineBetween(
-        startX,
-        combat.originY,
-        startX,
-        combat.originY + combat.gridSize * combat.gridCellSize
-      );
-    }
-    for (let y = 0; y <= combat.gridSize; y += 1) {
-      const startY = combat.originY + y * combat.gridCellSize;
-      this.combatGridGraphics.lineBetween(
-        combat.originX,
-        startY,
-        combat.originX + combat.gridSize * combat.gridCellSize,
-        startY
-      );
-    }
-  }
-
-  private renderTokens(tokens: Record<string, TokenSchema>) {
-    Object.entries(tokens).forEach(([id, token]) => {
-      let sprite = this.tokenSprites.get(id);
-      let label = this.nameLabels.get(id);
-
-      const color =
-        token.type === "monster" ? 0xef4444 : id === getOwnTokenId() ? 0x38bdf8 : 0x22c55e;
-
-      if (!sprite) {
-        sprite = this.add.circle(token.x, token.y, 18, color);
-        label = this.add.text(token.x, token.y - 26, token.name, {
-          color: "#f8fafc",
-          fontSize: "12px",
+    this.onMessage(
+      "cast_spell",
+      (client, payload: { spellId: string; target: Vector2 }) => {
+        const player = this.state.players[client.sessionId];
+        if (!player) {
+          return;
+        }
+        const spell = this.spells.find((entry) => entry.id === payload.spellId);
+        if (!spell) {
+          return;
+        }
+        const token = this.state.tokens[player.tokenId];
+        if (!token) {
+          return;
+        }
+        this.broadcast("spell_vfx", {
+          spellId: spell.id,
+          from: { x: token.x, y: token.y },
+          to: payload.target
         });
-        this.tokenSprites.set(id, sprite);
-        this.nameLabels.set(id, label);
       }
-      sprite.setPosition(token.x, token.y);
-      sprite.setFillStyle(color, 1);
-      label?.setPosition(token.x - (label?.width ?? 0) / 2, token.y - 32);
-    });
-
-    Array.from(this.tokenSprites.keys()).forEach((id) => {
-      if (!tokens[id]) {
-        this.tokenSprites.get(id)?.destroy();
-        this.nameLabels.get(id)?.destroy();
-        this.tokenSprites.delete(id);
-        this.nameLabels.delete(id);
-      }
-    });
-  }
-
-  private renderObstacles(obstacles: ObstacleSchema[]) {
-    if (!this.obstacleGraphics) return;
-    this.obstacleGraphics.clear();
-    this.obstacleGraphics.fillStyle(0x334155, 1);
-    obstacles.forEach((obstacle) =>
-      this.obstacleGraphics!.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height)
     );
   }
-}
 
-const game = new Phaser.Game({
-  type: Phaser.AUTO,
-  parent: "app",
-  width: WORLD_WIDTH,
-  height: WORLD_HEIGHT,
-  backgroundColor: "#0f172a",
-  scene: [GameScene],
-});
+  onJoin(client: Client, options: { name?: string; raceId?: string; classId?: string }) {
+    const isGM = Object.keys(this.state.players).length === 0;
+    const player: PlayerState = {
+      id: client.sessionId,
+      name: options.name ?? `Heros-${client.sessionId.slice(0, 4)}`,
+      raceId: options.raceId ?? "human",
+      classId: options.classId ?? "fighter",
+      dex: 10,
+      hp: 10,
+      maxHp: 10,
+      isGM,
+      mode: "exploration",
+      tokenId: ""
+    };
+    const stats = this.resolveStats(player.raceId, player.classId);
+    player.dex = stats.dex;
+    player.hp = stats.hp;
+    player.maxHp = stats.hp;
+    this.state.players[client.sessionId] = player;
 
-function setStatus(text: string) {
-  statusText.textContent = text;
-}
-
-function getOwnPlayer() {
-  if (!room || !room.state || !sessionId) return null;
-  return room.state.players?.[sessionId] ?? null;
-}
-
-function getOwnTokenId() {
-  return getOwnPlayer()?.tokenId ?? "";
-}
-
-function resolveTokenName(id: string) {
-  const token = room?.state?.tokens?.[id];
-  return token?.name ?? id;
-}
-
-function appendChat(message: string) {
-  const line = document.createElement("div");
-  line.textContent = message;
-  chatLog.appendChild(line);
-  chatLog.scrollTop = chatLog.scrollHeight;
-}
-
-function attachRoomListeners(activeRoom: Room<GameStateSchema>) {
-  activeRoom.onMessage("chat", (payload: { message: string }) => appendChat(payload.message));
-  activeRoom.onMessage("roll_result", (payload: { message: string }) => appendChat(payload.message));
-
-  activeRoom.onMessage(
-    "spell_vfx",
-    (payload: { spellId: string; from: { x: number; y: number }; to: { x: number; y: number } }) => {
-      const scene = game.scene.getScene("GameScene") as GameScene;
-      playSpellVfx(scene, payload.spellId, payload.from, payload.to);
+    if (isGM) {
+      this.gmId = player.id;
     }
-  );
 
-  activeRoom.onStateChange(() => {
-    const state = activeRoom.state as GameStateSchema;
-    const player = sessionId ? state.players?.[sessionId] : null;
+    const tokenId = `token_${client.sessionId}`;
+    const token: TokenState = {
+      id: tokenId,
+      name: player.name,
+      ownerId: player.id,
+      type: "player",
+      x: 200 + Math.random() * 200,
+      y: 200 + Math.random() * 200,
+      targetX: -1,
+      targetY: -1,
+      dex: stats.dex,
+      hp: stats.hp,
+      maxHp: stats.hp,
+      movePoints: stats.movePoints,
+      maxMovePoints: stats.movePoints,
+      gridX: 0,
+      gridY: 0
+    };
+    this.state.tokens[tokenId] = token;
+    player.tokenId = tokenId;
 
-    gmPanel.style.display = player?.isGM ? "block" : "none";
+    console.log("Player joined", player.name);
+  }
 
-    if (state.combat?.active) {
-      setStatus(`Combat actif - Room ${activeRoom.id}`);
-    } else {
-      setStatus(`Exploration - Room ${activeRoom.id}`);
+  onLeave(client: Client) {
+    const player = this.state.players[client.sessionId];
+    if (player) {
+      delete this.state.tokens[player.tokenId];
+      delete this.state.players[client.sessionId];
     }
-  });
-}
+  }
 
-function playSpellVfx(
-  scene: Phaser.Scene,
-  spellId: string,
-  from: { x: number; y: number },
-  to: { x: number; y: number }
-) {
-  const spell = spells.find((entry) => entry.id === spellId);
-  const color = spell?.color ?? "#f97316";
-  const tint = Phaser.Display.Color.HexStringToColor(color).color;
-
-  if (spell?.type === "aura") {
-    const aura = scene.add.circle(to.x, to.y, 20, tint, 0.6);
-    scene.tweens.add({
-      targets: aura,
-      scale: 2,
-      alpha: 0,
-      duration: 600,
-      ease: "Sine.easeOut",
-      onComplete: () => aura.destroy(),
+  private update(deltaTime: number) {
+    const deltaSeconds = deltaTime / 1000;
+    Object.values(this.state.tokens).forEach((token) => {
+      const owner = this.state.players[token.ownerId];
+      if (!owner || owner.mode !== "exploration" || token.targetX < 0 || token.targetY < 0) {
+        return;
+      }
+      const dx = token.targetX - token.x;
+      const dy = token.targetY - token.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance < 4) {
+        token.x = token.targetX;
+        token.y = token.targetY;
+        token.targetX = -1;
+        token.targetY = -1;
+        return;
+      }
+      const step = SPEED * deltaSeconds;
+      const nextX = token.x + (dx / distance) * Math.min(step, distance);
+      const nextY = token.y + (dy / distance) * Math.min(step, distance);
+      if (!this.isBlocked(nextX, nextY)) {
+        token.x = nextX;
+        token.y = nextY;
+      } else {
+        token.targetX = -1;
+        token.targetY = -1;
+      }
     });
-    return;
   }
 
-  if (spell?.type === "impact") {
-    const impact = scene.add.circle(to.x, to.y, 14, tint, 0.8);
-    scene.tweens.add({
-      targets: impact,
-      scale: 3,
-      alpha: 0,
-      duration: 500,
-      ease: "Sine.easeOut",
-      onComplete: () => impact.destroy(),
-    });
-    return;
+  private loadData() {
+    const baseUrl = new URL("../data/", import.meta.url);
+    this.races = this.readJson<RaceData[]>(new URL("races.json", baseUrl));
+    this.classes = this.readJson<ClassData[]>(new URL("classes.json", baseUrl));
+    this.spells = this.readJson<SpellData[]>(new URL("spells.json", baseUrl));
+    this.monsters = this.readJson<MonsterData[]>(new URL("monsters.json", baseUrl));
   }
 
-  const projectile = scene.add.circle(from.x, from.y, 8, tint, 1);
-  scene.tweens.add({
-    targets: projectile,
-    x: to.x,
-    y: to.y,
-    duration: 400,
-    ease: "Quad.easeInOut",
-    onComplete: () => {
-      projectile.destroy();
-      const burst = scene.add.circle(to.x, to.y, 12, tint, 0.9);
-      scene.tweens.add({
-        targets: burst,
-        scale: 2.5,
-        alpha: 0,
-        duration: 450,
-        onComplete: () => burst.destroy(),
-      });
-    },
-  });
-}
-
-async function loadData() {
-  const [racesData, classesData, spellsData, monstersData] = await Promise.all([
-    fetch("/data/races").then((res) => res.json()),
-    fetch("/data/classes").then((res) => res.json()),
-    fetch("/data/spells").then((res) => res.json()),
-    fetch("/data/monsters").then((res) => res.json()),
-  ]);
-
-  races = racesData as RaceData[];
-  classes = classesData as ClassData[];
-  spells = spellsData as SpellData[];
-  monsters = monstersData as MonsterData[];
-
-  raceSelect.innerHTML = races.map((race) => `<option value="${race.id}">${race.name}</option>`).join("");
-  classSelect.innerHTML = classes.map((cls) => `<option value="${cls.id}">${cls.name}</option>`).join("");
-  spellSelect.innerHTML = spells.map((spell) => `<option value="${spell.id}">${spell.name}</option>`).join("");
-  monsterSelect.innerHTML = monsters
-    .map((monster) => `<option value="${monster.id}">${monster.name}</option>`)
-    .join("");
-}
-
-async function createRoom() {
-  const name = playerNameInput.value.trim() || "MJ";
-  const raceId = raceSelect.value || "human";
-  const classId = classSelect.value || "fighter";
-
-  room = await client.joinOrCreate("vtt", { name, raceId, classId });
-  enterRoom(room);
-  roomInfo.textContent = `Code de room : ${room.id}`;
-}
-
-async function joinRoom() {
-  const name = playerNameInput.value.trim() || "Aventurier";
-  const raceId = raceSelect.value || "human";
-  const classId = classSelect.value || "fighter";
-  const code = roomCodeInput.value.trim();
-
-  if (!code) {
-    roomInfo.textContent = "Entrez un code.";
-    return;
+  private readJson<T>(url: URL): T {
+    const filePath = fileURLToPath(url);
+    const raw = readFileSync(filePath, "utf-8");
+    return JSON.parse(raw) as T;
   }
 
-  room = await client.joinById(code, { name, raceId, classId });
-  enterRoom(room);
-}
+  private seedObstacles() {
+    const obstacles: MapObstacle[] = [
+      { id: "crate", x: 360, y: 180, width: 80, height: 80 },
+      { id: "pillar", x: 620, y: 340, width: 60, height: 120 }
+    ];
+    this.state.obstacles = obstacles;
+  }
 
-function enterRoom(activeRoom: Room<any>) {
-  room = activeRoom;
-  sessionId = activeRoom.sessionId;
-  lobby.style.display = "none";
-  setStatus(`Connecté à la room ${activeRoom.id}`);
-  attachRoomListeners(activeRoom);
-}
+  private resolveStats(raceId: string, classId: string) {
+    const race = this.races.find((entry) => entry.id === raceId) ?? this.races[0];
+    const classData =
+      this.classes.find((entry) => entry.id === classId) ?? this.classes[0];
+    return {
+      dex: classData.baseDex + race.dexBonus,
+      hp: classData.baseHp + race.hpBonus,
+      movePoints: classData.movePoints
+    };
+  }
 
-createRoomBtn.addEventListener("click", () => {
-  createRoom().catch((error) => {
-    roomInfo.textContent = `Erreur: ${error.message}`;
-  });
-});
+  private spawnMonsterToken(monster: MonsterData) {
+    const tokenId = `monster_${monster.id}_${Date.now()}`;
+    const token: TokenState = {
+      id: tokenId,
+      name: monster.name,
+      ownerId: this.gmId,
+      type: "monster",
+      x: 540 + Math.random() * 120,
+      y: 260 + Math.random() * 120,
+      targetX: -1,
+      targetY: -1,
+      dex: monster.dex,
+      hp: monster.hp,
+      maxHp: monster.hp,
+      movePoints: monster.movePoints,
+      maxMovePoints: monster.movePoints,
+      gridX: 0,
+      gridY: 0
+    };
+    this.state.tokens[tokenId] = token;
+  }
 
-joinRoomBtn.addEventListener("click", () => {
-  joinRoom().catch((error) => {
-    roomInfo.textContent = `Erreur: ${error.message}`;
-  });
-});
-
-spawnMonsterBtn.addEventListener("click", () => {
-  if (!room) return;
-  const monsterId = monsterSelect.value;
-  room.send("spawn_monster", { monsterId });
-});
-
-startCombatBtn.addEventListener("click", () => {
-  room?.send("start_combat", {});
-});
-
-toggleGridBtn.addEventListener("click", () => {
-  gridVisible = !gridVisible;
-});
-
-castSpellBtn.addEventListener("click", () => {
-  if (!room) return;
-  const spellId = spellSelect.value;
-  room.send("cast_spell", { spellId, target: lastPointer });
-});
-
-rollD20Btn.addEventListener("click", () => room?.send("roll", { kind: "d20" }));
-rollAttackBtn.addEventListener("click", () => room?.send("roll", { kind: "attack" }));
-rollSkillBtn.addEventListener("click", () => room?.send("roll", { kind: "skill" }));
-
-chatInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && room) {
-    const text = chatInput.value.trim();
-    if (text.length > 0) {
-      room.send("chat", { text });
-      chatInput.value = "";
+  private startCombat() {
+    if (this.state.combat.active) {
+      return;
     }
+    const participants = Object.values(this.state.tokens);
+    if (participants.length === 0) {
+      return;
+    }
+    this.state.combat.active = true;
+    this.state.combat.turnIndex = 0;
+    this.state.combat.turnOrder = [];
+
+    const initiatives = participants.map((token) => ({
+      id: token.id,
+      roll: Math.floor(Math.random() * 20) + 1 + token.dex
+    }));
+    initiatives.sort((a, b) => b.roll - a.roll);
+    this.state.combat.turnOrder = initiatives.map((entry) => entry.id);
+
+    participants.forEach((token, index) => {
+      const owner = this.state.players[token.ownerId];
+      if (owner) {
+        owner.mode = "combat";
+      }
+      token.movePoints = token.maxMovePoints;
+      token.gridX = index % this.state.combat.gridSize;
+      token.gridY = Math.floor(index / this.state.combat.gridSize);
+      token.x =
+        this.state.combat.originX +
+        token.gridX * this.state.combat.gridCellSize +
+        this.state.combat.gridCellSize / 2;
+      token.y =
+        this.state.combat.originY +
+        token.gridY * this.state.combat.gridCellSize +
+        this.state.combat.gridCellSize / 2;
+    });
+    this.state.combat.activeTokenId = this.state.combat.turnOrder[0] ?? "";
   }
+
+  private isBlocked(x: number, y: number) {
+    return this.state.obstacles.some((obstacle) => {
+      return (
+        x >= obstacle.x &&
+        x <= obstacle.x + obstacle.width &&
+        y >= obstacle.y &&
+        y <= obstacle.y + obstacle.height
+      );
+    });
+  }
+}
+
+const app = express();
+app.use(express.json());
+app.use(
+  cors({
+    origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
+    credentials: true
+  })
+);
+
+app.use("/colyseus", (req, _res, next) => {
+  console.log(`[matchmake] ${req.method} ${req.originalUrl}`);
+  next();
 });
 
-setStatus("En attente de connexion...");
-
-loadData().catch(() => {
-  roomInfo.textContent = "Impossible de charger les données. Lancez le serveur.";
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
 });
 
-void game;
+app.get("/data/races", (_req, res) => {
+  console.log("[data] races");
+  res.json([{ id: "human", name: "Human" }]);
+});
+
+app.get("/data/classes", (_req, res) => {
+  console.log("[data] classes");
+  res.json([{ id: "fighter", name: "Fighter" }]);
+});
+
+app.get("/data/spells", (_req, res) => {
+  console.log("[data] spells");
+  res.json([]);
+});
+
+app.get("/data/monsters", (_req, res) => {
+  console.log("[data] monsters");
+  res.json([]);
+});
+
+app.get("/", (_req, res) => {
+  res.send("Emberfall VTT server running");
+});
+
+app.use((err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("Express error:", req.method, req.originalUrl, err);
+  res.status(500).json({ error: "Internal server error" });
+});
+
+const server = createServer(app);
+const gameServer = new Server({
+  transport: new WebSocketTransport({ server, path: "/colyseus" })
+});
+
+gameServer.define("vtt", VttRoom);
+(gameServer as any).attach?.({ server, express: app, path: "/colyseus" });
+
+server.listen(2567, () => {
+  console.log("Server listening on http://localhost:2567");
+});

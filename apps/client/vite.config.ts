@@ -2,19 +2,17 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   server: {
+    port: 5173,
     proxy: {
-      // API data (races/classes/spells/monsters)
       "/data": {
         target: "http://localhost:2567",
-        changeOrigin: true,
+        changeOrigin: true
       },
-
-      // Colyseus HTTP (matchmake) + WebSocket
       "/colyseus": {
         target: "http://localhost:2567",
-        changeOrigin: true,
         ws: true,
-      },
-    },
-  },
+        changeOrigin: true
+      }
+    }
+  }
 });
