@@ -3,7 +3,6 @@ import express from "express";
 import cors from "cors";
 import { Server, Room, Client } from "colyseus";
 import { WebSocketTransport } from "@colyseus/ws-transport";
-import { Schema, type, MapSchema, ArraySchema } from "@colyseus/schema";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import type {
@@ -16,66 +15,61 @@ import type {
   Vector2
 } from "@emberfall3/shared";
 
-class PlayerState extends Schema {
-  @type("string") id = "";
-  @type("string") name = "";
-  @type("string") raceId = "human";
-  @type("string") classId = "fighter";
-  @type("number") dex = 10;
-  @type("number") hp = 10;
-  @type("number") maxHp = 10;
-  @type("boolean") isGM = false;
-  @type("string") mode: PlayerMode = "exploration";
-  @type("string") tokenId = "";
-}
+type PlayerState = {
+  id: string;
+  name: string;
+  raceId: string;
+  classId: string;
+  dex: number;
+  hp: number;
+  maxHp: number;
+  isGM: boolean;
+  mode: PlayerMode;
+  tokenId: string;
+};
 
-class TokenState extends Schema {
-  @type("string") id = "";
-  @type("string") name = "";
-  @type("string") ownerId = "";
-  @type("string") type = "player";
-  @type("number") x = 0;
-  @type("number") y = 0;
-  @type("number") targetX = -1;
-  @type("number") targetY = -1;
-  @type("number") dex = 10;
-  @type("number") hp = 10;
-  @type("number") maxHp = 10;
-  @type("number") movePoints = 4;
-  @type("number") maxMovePoints = 4;
-  @type("number") gridX = 0;
-  @type("number") gridY = 0;
-}
+type TokenState = {
+  id: string;
+  name: string;
+  ownerId: string;
+  type: "player" | "monster";
+  x: number;
+  y: number;
+  targetX: number;
+  targetY: number;
+  dex: number;
+  hp: number;
+  maxHp: number;
+  movePoints: number;
+  maxMovePoints: number;
+  gridX: number;
+  gridY: number;
+};
 
-class ObstacleState extends Schema {
-  @type("string") id = "";
-  @type("number") x = 0;
-  @type("number") y = 0;
-  @type("number") width = 0;
-  @type("number") height = 0;
-}
+type ObstacleState = MapObstacle;
 
-class CombatState extends Schema {
-  @type("boolean") active = false;
-  @type("number") turnIndex = 0;
-  @type(["string"]) turnOrder = new ArraySchema<string>();
-  @type("string") activeTokenId = "";
-  @type("number") gridSize = 8;
-  @type("number") gridCellSize = 64;
-  @type("number") originX = 120;
-  @type("number") originY = 80;
-}
+type CombatState = {
+  active: boolean;
+  turnIndex: number;
+  turnOrder: string[];
+  activeTokenId: string;
+  gridSize: number;
+  gridCellSize: number;
+  originX: number;
+  originY: number;
+};
 
-class GameState extends Schema {
-  @type({ map: PlayerState }) players = new MapSchema<PlayerState>();
-  @type({ map: TokenState }) tokens = new MapSchema<TokenState>();
-  @type([ObstacleState]) obstacles = new ArraySchema<ObstacleState>();
-  @type(CombatState) combat = new CombatState();
-}
+type GameState = {
+  obstacles: ObstacleState[];
+  players: Record<string, PlayerState>;
+  tokens: Record<string, TokenState>;
+  combat: CombatState;
+  turn: number;
+};
 
 const SPEED = 180;
 
-class VTTRoom extends Room<GameState> {
+class VttRoom extends Room<GameState> {
   private races: RaceData[] = [];
   private classes: ClassData[] = [];
   private spells: SpellData[] = [];
@@ -83,18 +77,36 @@ class VTTRoom extends Room<GameState> {
   private gmId = "";
 
   onCreate() {
-    this.setState(new GameState());
+    this.setState({
+      obstacles: [],
+      players: {},
+      tokens: {},
+      combat: {
+        active: false,
+        turnIndex: 0,
+        turnOrder: [],
+        activeTokenId: "",
+        gridSize: 8,
+        gridCellSize: 64,
+        originX: 120,
+        originY: 80
+      },
+      turn: 0
+    });
+
+    console.log("VttRoom created");
+
     this.loadData();
     this.seedObstacles();
 
     this.setSimulationInterval((deltaTime) => this.update(deltaTime));
 
     this.onMessage("move", (client, payload: { x: number; y: number }) => {
-      const player = this.state.players.get(client.sessionId);
+      const player = this.state.players[client.sessionId];
       if (!player || player.mode !== "exploration") {
         return;
       }
-      const token = this.state.tokens.get(player.tokenId);
+      const token = this.state.tokens[player.tokenId];
       if (!token) {
         return;
       }
@@ -105,14 +117,14 @@ class VTTRoom extends Room<GameState> {
     this.onMessage(
       "combat_move",
       (client, payload: { gridX: number; gridY: number }) => {
-        const player = this.state.players.get(client.sessionId);
+        const player = this.state.players[client.sessionId];
         if (!player || !this.state.combat.active || player.mode !== "combat") {
           return;
         }
         if (this.state.combat.activeTokenId !== player.tokenId) {
           return;
         }
-        const token = this.state.tokens.get(player.tokenId);
+        const token = this.state.tokens[player.tokenId];
         if (!token) {
           return;
         }
@@ -145,7 +157,7 @@ class VTTRoom extends Room<GameState> {
     );
 
     this.onMessage("end_turn", (client) => {
-      const player = this.state.players.get(client.sessionId);
+      const player = this.state.players[client.sessionId];
       if (!player || !this.state.combat.active || player.mode !== "combat") {
         return;
       }
@@ -155,7 +167,7 @@ class VTTRoom extends Room<GameState> {
       this.state.combat.turnIndex =
         (this.state.combat.turnIndex + 1) % this.state.combat.turnOrder.length;
       const nextTokenId = this.state.combat.turnOrder[this.state.combat.turnIndex];
-      const nextToken = this.state.tokens.get(nextTokenId);
+      const nextToken = this.state.tokens[nextTokenId];
       if (nextToken) {
         nextToken.movePoints = nextToken.maxMovePoints;
       }
@@ -163,7 +175,7 @@ class VTTRoom extends Room<GameState> {
     });
 
     this.onMessage("spawn_monster", (client, payload: { monsterId: string }) => {
-      const player = this.state.players.get(client.sessionId);
+      const player = this.state.players[client.sessionId];
       if (!player || !player.isGM) {
         return;
       }
@@ -175,7 +187,7 @@ class VTTRoom extends Room<GameState> {
     });
 
     this.onMessage("start_combat", (client) => {
-      const player = this.state.players.get(client.sessionId);
+      const player = this.state.players[client.sessionId];
       if (!player || !player.isGM) {
         return;
       }
@@ -183,7 +195,7 @@ class VTTRoom extends Room<GameState> {
     });
 
     this.onMessage("chat", (client, payload: { text: string }) => {
-      const player = this.state.players.get(client.sessionId);
+      const player = this.state.players[client.sessionId];
       if (!player) {
         return;
       }
@@ -192,7 +204,7 @@ class VTTRoom extends Room<GameState> {
     });
 
     this.onMessage("roll", (client, payload: { kind: "d20" | "attack" | "skill" }) => {
-      const player = this.state.players.get(client.sessionId);
+      const player = this.state.players[client.sessionId];
       if (!player) {
         return;
       }
@@ -208,7 +220,7 @@ class VTTRoom extends Room<GameState> {
     this.onMessage(
       "cast_spell",
       (client, payload: { spellId: string; target: Vector2 }) => {
-        const player = this.state.players.get(client.sessionId);
+        const player = this.state.players[client.sessionId];
         if (!player) {
           return;
         }
@@ -216,7 +228,7 @@ class VTTRoom extends Room<GameState> {
         if (!spell) {
           return;
         }
-        const token = this.state.tokens.get(player.tokenId);
+        const token = this.state.tokens[player.tokenId];
         if (!token) {
           return;
         }
@@ -230,53 +242,67 @@ class VTTRoom extends Room<GameState> {
   }
 
   onJoin(client: Client, options: { name?: string; raceId?: string; classId?: string }) {
-    const isGM = this.state.players.size === 0;
-    const player = new PlayerState();
-    player.id = client.sessionId;
-    player.name = options.name ?? `Heros-${client.sessionId.slice(0, 4)}`;
-    player.raceId = options.raceId ?? "human";
-    player.classId = options.classId ?? "fighter";
-    player.isGM = isGM;
+    const isGM = Object.keys(this.state.players).length === 0;
+    const player: PlayerState = {
+      id: client.sessionId,
+      name: options.name ?? `Heros-${client.sessionId.slice(0, 4)}`,
+      raceId: options.raceId ?? "human",
+      classId: options.classId ?? "fighter",
+      dex: 10,
+      hp: 10,
+      maxHp: 10,
+      isGM,
+      mode: "exploration",
+      tokenId: ""
+    };
     const stats = this.resolveStats(player.raceId, player.classId);
     player.dex = stats.dex;
     player.hp = stats.hp;
     player.maxHp = stats.hp;
-    this.state.players.set(client.sessionId, player);
+    this.state.players[client.sessionId] = player;
 
     if (isGM) {
       this.gmId = player.id;
     }
 
-    const token = new TokenState();
-    token.id = `token_${client.sessionId}`;
-    token.name = player.name;
-    token.ownerId = player.id;
-    token.type = "player";
-    token.x = 200 + Math.random() * 200;
-    token.y = 200 + Math.random() * 200;
-    token.dex = stats.dex;
-    token.hp = stats.hp;
-    token.maxHp = stats.hp;
-    token.maxMovePoints = stats.movePoints;
-    token.movePoints = stats.movePoints;
-    this.state.tokens.set(token.id, token);
-    player.tokenId = token.id;
+    const tokenId = `token_${client.sessionId}`;
+    const token: TokenState = {
+      id: tokenId,
+      name: player.name,
+      ownerId: player.id,
+      type: "player",
+      x: 200 + Math.random() * 200,
+      y: 200 + Math.random() * 200,
+      targetX: -1,
+      targetY: -1,
+      dex: stats.dex,
+      hp: stats.hp,
+      maxHp: stats.hp,
+      movePoints: stats.movePoints,
+      maxMovePoints: stats.movePoints,
+      gridX: 0,
+      gridY: 0
+    };
+    this.state.tokens[tokenId] = token;
+    player.tokenId = tokenId;
+
+    console.log("Player joined", player.name);
   }
 
   onLeave(client: Client) {
-    const player = this.state.players.get(client.sessionId);
+    const player = this.state.players[client.sessionId];
     if (player) {
-      this.state.tokens.delete(player.tokenId);
+      delete this.state.tokens[player.tokenId];
+      delete this.state.players[client.sessionId];
     }
-    this.state.players.delete(client.sessionId);
   }
 
   private update(deltaTime: number) {
     const deltaSeconds = deltaTime / 1000;
-    for (const token of this.state.tokens.values()) {
-      const owner = this.state.players.get(token.ownerId);
+    Object.values(this.state.tokens).forEach((token) => {
+      const owner = this.state.players[token.ownerId];
       if (!owner || owner.mode !== "exploration" || token.targetX < 0 || token.targetY < 0) {
-        continue;
+        return;
       }
       const dx = token.targetX - token.x;
       const dy = token.targetY - token.y;
@@ -286,7 +312,7 @@ class VTTRoom extends Room<GameState> {
         token.y = token.targetY;
         token.targetX = -1;
         token.targetY = -1;
-        continue;
+        return;
       }
       const step = SPEED * deltaSeconds;
       const nextX = token.x + (dx / distance) * Math.min(step, distance);
@@ -298,7 +324,7 @@ class VTTRoom extends Room<GameState> {
         token.targetX = -1;
         token.targetY = -1;
       }
-    }
+    });
   }
 
   private loadData() {
@@ -320,15 +346,7 @@ class VTTRoom extends Room<GameState> {
       { id: "crate", x: 360, y: 180, width: 80, height: 80 },
       { id: "pillar", x: 620, y: 340, width: 60, height: 120 }
     ];
-    obstacles.forEach((entry) => {
-      const obstacle = new ObstacleState();
-      obstacle.id = entry.id;
-      obstacle.x = entry.x;
-      obstacle.y = entry.y;
-      obstacle.width = entry.width;
-      obstacle.height = entry.height;
-      this.state.obstacles.push(obstacle);
-    });
+    this.state.obstacles = obstacles;
   }
 
   private resolveStats(raceId: string, classId: string) {
@@ -343,42 +361,48 @@ class VTTRoom extends Room<GameState> {
   }
 
   private spawnMonsterToken(monster: MonsterData) {
-    const token = new TokenState();
-    token.id = `monster_${monster.id}_${Date.now()}`;
-    token.name = monster.name;
-    token.ownerId = this.gmId;
-    token.type = "monster";
-    token.x = 540 + Math.random() * 120;
-    token.y = 260 + Math.random() * 120;
-    token.dex = monster.dex;
-    token.hp = monster.hp;
-    token.maxHp = monster.hp;
-    token.maxMovePoints = monster.movePoints;
-    token.movePoints = monster.movePoints;
-    this.state.tokens.set(token.id, token);
+    const tokenId = `monster_${monster.id}_${Date.now()}`;
+    const token: TokenState = {
+      id: tokenId,
+      name: monster.name,
+      ownerId: this.gmId,
+      type: "monster",
+      x: 540 + Math.random() * 120,
+      y: 260 + Math.random() * 120,
+      targetX: -1,
+      targetY: -1,
+      dex: monster.dex,
+      hp: monster.hp,
+      maxHp: monster.hp,
+      movePoints: monster.movePoints,
+      maxMovePoints: monster.movePoints,
+      gridX: 0,
+      gridY: 0
+    };
+    this.state.tokens[tokenId] = token;
   }
 
   private startCombat() {
     if (this.state.combat.active) {
       return;
     }
-    const participants = Array.from(this.state.tokens.values());
+    const participants = Object.values(this.state.tokens);
     if (participants.length === 0) {
       return;
     }
     this.state.combat.active = true;
     this.state.combat.turnIndex = 0;
-    this.state.combat.turnOrder.clear();
+    this.state.combat.turnOrder = [];
 
     const initiatives = participants.map((token) => ({
       id: token.id,
       roll: Math.floor(Math.random() * 20) + 1 + token.dex
     }));
     initiatives.sort((a, b) => b.roll - a.roll);
-    initiatives.forEach((entry) => this.state.combat.turnOrder.push(entry.id));
+    this.state.combat.turnOrder = initiatives.map((entry) => entry.id);
 
     participants.forEach((token, index) => {
-      const owner = this.state.players.get(token.ownerId);
+      const owner = this.state.players[token.ownerId];
       if (owner) {
         owner.mode = "combat";
       }
@@ -410,18 +434,33 @@ class VTTRoom extends Room<GameState> {
 }
 
 const app = express();
-app.use(cors());
-app.get("/data/:type", (req, res) => {
-  const allowed = new Set(["races", "classes", "spells", "monsters", "quests"]);
-  const type = req.params.type;
-  if (!allowed.has(type)) {
-    res.status(404).send("Not found");
-    return;
-  }
-  const fileUrl = new URL(`../data/${type}.json`, import.meta.url);
-  const raw = readFileSync(fileURLToPath(fileUrl), "utf-8");
-  res.type("json").send(raw);
+app.use(
+  cors({
+    origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
+    credentials: true
+  })
+);
+
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
 });
+
+app.get("/data/races", (_req, res) => {
+  res.json([{ id: "human", name: "Human" }]);
+});
+
+app.get("/data/classes", (_req, res) => {
+  res.json([{ id: "fighter", name: "Fighter" }]);
+});
+
+app.get("/data/spells", (_req, res) => {
+  res.json([]);
+});
+
+app.get("/data/monsters", (_req, res) => {
+  res.json([]);
+});
+
 app.get("/", (_req, res) => {
   res.send("Emberfall VTT server running");
 });
@@ -431,7 +470,8 @@ const gameServer = new Server({
   transport: new WebSocketTransport({ server })
 });
 
-gameServer.define("vtt", VTTRoom);
+gameServer.define("vtt", VttRoom);
+(gameServer as any).attach?.({ server, express: app });
 
 gameServer.listen(2567);
 

@@ -1,8 +1,9 @@
 import Phaser from "phaser";
-import { Client as ColyseusClient, Room } from "colyseus.js";
+import { Client, Room } from "colyseus.js";
 import type { ClassData, MonsterData, RaceData, SpellData } from "@emberfall3/shared";
+import { WS_BASE } from "./config";
 
-const SERVER_URL = "ws://localhost:2567";
+const SERVER_URL = WS_BASE;
 const WORLD_WIDTH = 1024;
 const WORLD_HEIGHT = 768;
 const TILE_SIZE = 64;
@@ -55,8 +56,8 @@ type CombatStateSchema = {
 };
 
 type GameStateSchema = {
-  players: Map<string, PlayerSchema>;
-  tokens: Map<string, TokenSchema>;
+  players: Record<string, PlayerSchema>;
+  tokens: Record<string, TokenSchema>;
   obstacles: ObstacleSchema[];
   combat: CombatStateSchema;
 };
@@ -87,8 +88,9 @@ const chatInput = document.getElementById("chatInput") as HTMLInputElement;
 const raceSelect = document.getElementById("raceSelect") as HTMLSelectElement;
 const classSelect = document.getElementById("classSelect") as HTMLSelectElement;
 
-let room: Room<GameStateSchema> | null = null;
-let sessionId = "";
+const client = new Client(SERVER_URL);
+let room: Room<any> | null = null;
+let sessionId: string | null = null;
 let gridVisible = true;
 let races: RaceData[] = [];
 let classes: ClassData[] = [];
@@ -164,12 +166,14 @@ class GameScene extends Phaser.Scene {
   }
 
   update() {
-    if (!room) {
+    if (!room || !room.state) {
       return;
     }
     const state = room.state as GameStateSchema;
-    this.renderObstacles(state.obstacles ?? []);
-    this.renderTokens(state.tokens as Map<string, TokenSchema>);
+    const obstacles = Array.isArray(state.obstacles) ? state.obstacles : [];
+    const tokens = state.tokens ?? {};
+    this.renderObstacles(obstacles);
+    this.renderTokens(tokens);
     this.renderGrid();
     this.renderCombatGrid(state.combat as CombatStateSchema);
   }
@@ -232,8 +236,8 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  private renderTokens(tokens: Map<string, TokenSchema>) {
-    tokens.forEach((token, id) => {
+  private renderTokens(tokens: Record<string, TokenSchema>) {
+    Object.entries(tokens).forEach(([id, token]) => {
       let sprite = this.tokenSprites.get(id);
       let label = this.nameLabels.get(id);
       const color = token.type === "monster" ? 0xef4444 : id === getOwnTokenId() ? 0x38bdf8 : 0x22c55e;
@@ -252,7 +256,7 @@ class GameScene extends Phaser.Scene {
     });
 
     Array.from(this.tokenSprites.keys()).forEach((id) => {
-      if (!tokens.has(id)) {
+      if (!tokens[id]) {
         this.tokenSprites.get(id)?.destroy();
         this.nameLabels.get(id)?.destroy();
         this.tokenSprites.delete(id);
@@ -282,14 +286,15 @@ const game = new Phaser.Game({
   scene: [GameScene]
 });
 
-const client = new ColyseusClient(SERVER_URL);
-
 function setStatus(text: string) {
   statusText.textContent = text;
 }
 
 function getOwnPlayer() {
-  return room?.state.players.get(sessionId);
+  if (!room || !room.state || !sessionId) {
+    return null;
+  }
+  return room.state.players[sessionId];
 }
 
 function getOwnTokenId() {
@@ -297,7 +302,7 @@ function getOwnTokenId() {
 }
 
 function resolveTokenName(id: string) {
-  const token = room?.state.tokens.get(id);
+  const token = room?.state.tokens?.[id];
   return token?.name ?? id;
 }
 
@@ -324,7 +329,7 @@ function attachRoomListeners(activeRoom: Room<GameStateSchema>) {
 
   activeRoom.onStateChange(() => {
     const state = activeRoom.state as GameStateSchema;
-    const player = state.players.get(sessionId);
+    const player = sessionId ? state.players[sessionId] : null;
     if (player?.isGM) {
       gmPanel.style.display = "block";
     } else {
@@ -412,9 +417,9 @@ async function createRoom() {
   const name = playerNameInput.value.trim() || "MJ";
   const raceId = raceSelect.value || "human";
   const classId = classSelect.value || "fighter";
-  const newRoom = await client.create<GameStateSchema>("vtt", { name, raceId, classId });
-  enterRoom(newRoom);
-  roomInfo.textContent = `Code de room: ${newRoom.id}`;
+  room = await client.joinOrCreate("vtt", { name, raceId, classId });
+  enterRoom(room);
+  roomInfo.textContent = `Code de room : ${room.id}`;
 }
 
 async function joinRoom() {
@@ -426,11 +431,11 @@ async function joinRoom() {
     roomInfo.textContent = "Entrez un code.";
     return;
   }
-  const joinedRoom = await client.joinById<GameStateSchema>(code, { name, raceId, classId });
-  enterRoom(joinedRoom);
+  room = await client.joinById(code, { name, raceId, classId });
+  enterRoom(room);
 }
 
-function enterRoom(activeRoom: Room<GameStateSchema>) {
+function enterRoom(activeRoom: Room<any>) {
   room = activeRoom;
   sessionId = activeRoom.sessionId;
   lobby.style.display = "none";
