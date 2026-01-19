@@ -1,0 +1,44 @@
+[
+  {
+    "id": "fireball",
+    "name": "Fireball",
+    "type": "projectile",
+    "color": "#f97316",
+    "damage": 8
+  },
+  {
+    "id": "ice_bolt",
+    "name": "Ice Bolt",
+    "type": "projectile",
+    "color": "#38bdf8",
+    "damage": 6
+  },
+  {
+    "id": "heal",
+    "name": "Heal",
+    "type": "aura",
+    "color": "#22c55e",
+    "heal": 6
+  },
+  {
+    "id": "arcane_blast",
+    "name": "Arcane Blast",
+    "type": "projectile",
+    "color": "#a855f7",
+    "damage": 7
+  },
+  {
+    "id": "shield",
+    "name": "Shield",
+    "type": "aura",
+    "color": "#facc15",
+    "buff": "shielded"
+  },
+  {
+    "id": "poison_cloud",
+    "name": "Poison Cloud",
+    "type": "impact",
+    "color": "#4ade80",
+    "damage": 5
+  }
+]
