@@ -1,8 +1,22 @@
 import Phaser from "phaser";
 import { Client as ColyseusClient, Room } from "colyseus.js";
+import { Client } from "colyseus.js";
 import type { ClassData, MonsterData, RaceData, SpellData } from "@emberfall3/shared";
 
-const SERVER_URL = "ws://localhost:2567";
+/**
+ * ✅ BLOQUER LE MENU CLIC DROIT TOUT DE SUITE (AVANT TOUT)
+ * Sinon le navigateur prend la priorité et Phaser reçoit parfois rien.
+ */
+window.addEventListener(
+  "contextmenu",
+  (e) => {
+    e.preventDefault();
+  },
+  { passive: false }
+);
+
+import { WS_BASE } from "./config";
+const SERVER_URL = WS_BASE;
 const WORLD_WIDTH = 1024;
 const WORLD_HEIGHT = 768;
 const TILE_SIZE = 64;
@@ -87,7 +101,7 @@ const chatInput = document.getElementById("chatInput") as HTMLInputElement;
 const raceSelect = document.getElementById("raceSelect") as HTMLSelectElement;
 const classSelect = document.getElementById("classSelect") as HTMLSelectElement;
 
-let room: Room<GameStateSchema> | null = null;
+let room: any = null;
 let sessionId = "";
 let gridVisible = true;
 let races: RaceData[] = [];
@@ -110,6 +124,13 @@ class GameScene extends Phaser.Scene {
   }
 
   create() {
+    /**
+     * ✅ ULTRA IMPORTANT
+     * Désactive le menu contextuel côté Phaser Input.
+     * Sans ça, pointer.rightButtonDown() peut ne jamais être pris.
+     */
+    this.input.mouse?.disableContextMenu();
+
     this.createTilemap();
 
     this.gridGraphics = this.add.graphics();
@@ -128,16 +149,21 @@ class GameScene extends Phaser.Scene {
     });
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+      // ✅ DEBUG: tu dois voir ça en console quand tu cliques droit
+      // 0 = gauche, 1 = milieu, 2 = droit
+      console.log("POINTER DOWN button =", pointer.button);
+
       if (pointer.middleButtonDown()) {
         this.dragging = true;
         this.dragStart = { x: pointer.x, y: pointer.y };
         return;
       }
-      if (!room) {
-        return;
-      }
+
+      if (!room) return;
+
       const state = room.state as GameStateSchema;
       const combat = state.combat as CombatStateSchema;
+
       if (pointer.rightButtonDown()) {
         if (combat.active) {
           const gridX = Math.floor((pointer.worldX - combat.originX) / combat.gridCellSize);
@@ -163,54 +189,67 @@ class GameScene extends Phaser.Scene {
     });
   }
 
-  update() {
-    if (!room) {
-      return;
-    }
-    const state = room.state as GameStateSchema;
-    this.renderObstacles(state.obstacles ?? []);
-    this.renderTokens(state.tokens as Map<string, TokenSchema>);
-    this.renderGrid();
-    this.renderCombatGrid(state.combat as CombatStateSchema);
+update() {
+  // ✅ Guard: pas de room / pas de state => on ne fait rien
+  if (!room) return;
+
+  const state: any = room.state;
+  if (!state) return; // ✅ évite "state is null"
+
+  // ⚠️ Enlève le spam
+  // console.log("step");  // ❌ supprime
+
+  // Exemple : si tu as des renderers
+  // (garde tes fonctions existantes)
+  try {
+    // si ton code attend state.obstacles
+    const obstacles = Array.isArray(state.obstacles) ? state.obstacles : [];
+    this.renderObstacles?.(obstacles);
+
+    // si ton code attend state.players
+    const players = state.players ?? {};
+    this.renderPlayers?.(players);
+
+    // ... ton reste de logique update (caméra, drag, etc.)
+  } catch (e) {
+    // optionnel : évite de crasher la boucle
+    console.error("update error:", e);
   }
+}
+
 
   private createTilemap() {
     const colors = [0x0f172a, 0x1e293b];
     for (let y = 0; y < WORLD_HEIGHT; y += TILE_SIZE) {
       for (let x = 0; x < WORLD_WIDTH; x += TILE_SIZE) {
-        const index = ((x / TILE_SIZE) + (y / TILE_SIZE)) % 2;
-        this.add.rectangle(x + TILE_SIZE / 2, y + TILE_SIZE / 2, TILE_SIZE, TILE_SIZE, colors[index]).setOrigin(0.5);
+        const index = (x / TILE_SIZE + y / TILE_SIZE) % 2;
+        this.add
+          .rectangle(x + TILE_SIZE / 2, y + TILE_SIZE / 2, TILE_SIZE, TILE_SIZE, colors[index])
+          .setOrigin(0.5);
       }
     }
   }
 
   private renderGrid() {
-    if (!this.gridGraphics) {
-      return;
-    }
+    if (!this.gridGraphics) return;
     this.gridGraphics.clear();
-    if (!gridVisible) {
-      return;
-    }
+    if (!gridVisible) return;
+
     this.gridGraphics.lineStyle(1, 0x334155, 0.6);
-    for (let x = 0; x <= WORLD_WIDTH; x += TILE_SIZE) {
-      this.gridGraphics.lineBetween(x, 0, x, WORLD_HEIGHT);
-    }
-    for (let y = 0; y <= WORLD_HEIGHT; y += TILE_SIZE) {
-      this.gridGraphics.lineBetween(0, y, WORLD_WIDTH, y);
-    }
+    for (let x = 0; x <= WORLD_WIDTH; x += TILE_SIZE) this.gridGraphics.lineBetween(x, 0, x, WORLD_HEIGHT);
+    for (let y = 0; y <= WORLD_HEIGHT; y += TILE_SIZE) this.gridGraphics.lineBetween(0, y, WORLD_WIDTH, y);
   }
 
   private renderCombatGrid(combat: CombatStateSchema) {
-    if (!this.combatGridGraphics) {
-      return;
-    }
+    if (!this.combatGridGraphics) return;
+
     this.combatGridGraphics.clear();
     if (!combat.active) {
       combatPanel.style.display = "none";
       return;
     }
     combatPanel.style.display = "flex";
+
     const current = combat.activeTokenId;
     const currentLabel = current === getOwnTokenId() ? "Vous" : current;
     combatTurn.textContent = `Tour: ${currentLabel}`;
@@ -222,6 +261,7 @@ class GameScene extends Phaser.Scene {
     turnOrder.innerHTML = order;
 
     this.combatGridGraphics.lineStyle(1, 0x64748b, 0.9);
+
     for (let x = 0; x <= combat.gridSize; x += 1) {
       const startX = combat.originX + x * combat.gridCellSize;
       this.combatGridGraphics.lineBetween(startX, combat.originY, startX, combat.originY + combat.gridSize * combat.gridCellSize);
@@ -236,13 +276,12 @@ class GameScene extends Phaser.Scene {
     tokens.forEach((token, id) => {
       let sprite = this.tokenSprites.get(id);
       let label = this.nameLabels.get(id);
+
       const color = token.type === "monster" ? 0xef4444 : id === getOwnTokenId() ? 0x38bdf8 : 0x22c55e;
+
       if (!sprite) {
         sprite = this.add.circle(token.x, token.y, 18, color);
-        label = this.add.text(token.x, token.y - 26, token.name, {
-          color: "#f8fafc",
-          fontSize: "12px"
-        });
+        label = this.add.text(token.x, token.y - 26, token.name, { color: "#f8fafc", fontSize: "12px" });
         this.tokenSprites.set(id, sprite);
         this.nameLabels.set(id, label);
       }
@@ -262,14 +301,10 @@ class GameScene extends Phaser.Scene {
   }
 
   private renderObstacles(obstacles: ObstacleSchema[]) {
-    if (!this.obstacleGraphics) {
-      return;
-    }
+    if (!this.obstacleGraphics) return;
     this.obstacleGraphics.clear();
     this.obstacleGraphics.fillStyle(0x334155, 1);
-    obstacles.forEach((obstacle) => {
-      this.obstacleGraphics.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
-    });
+    obstacles.forEach((obstacle) => this.obstacleGraphics!.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height));
   }
 }
 
@@ -281,6 +316,9 @@ const game = new Phaser.Game({
   backgroundColor: "#0f172a",
   scene: [GameScene]
 });
+
+// ✅ On garde ça aussi (ceinture + bretelles)
+game.canvas.oncontextmenu = (e) => e.preventDefault();
 
 const client = new ColyseusClient(SERVER_URL);
 
@@ -309,13 +347,8 @@ function appendChat(message: string) {
 }
 
 function attachRoomListeners(activeRoom: Room<GameStateSchema>) {
-  activeRoom.onMessage("chat", (payload: { message: string }) => {
-    appendChat(payload.message);
-  });
-
-  activeRoom.onMessage("roll_result", (payload: { message: string }) => {
-    appendChat(payload.message);
-  });
+  activeRoom.onMessage("chat", (payload: { message: string }) => appendChat(payload.message));
+  activeRoom.onMessage("roll_result", (payload: { message: string }) => appendChat(payload.message));
 
   activeRoom.onMessage("spell_vfx", (payload: { spellId: string; from: { x: number; y: number }; to: { x: number; y: number } }) => {
     const scene = game.scene.getScene("GameScene") as GameScene;
@@ -325,16 +358,11 @@ function attachRoomListeners(activeRoom: Room<GameStateSchema>) {
   activeRoom.onStateChange(() => {
     const state = activeRoom.state as GameStateSchema;
     const player = state.players.get(sessionId);
-    if (player?.isGM) {
-      gmPanel.style.display = "block";
-    } else {
-      gmPanel.style.display = "none";
-    }
-    if (state.combat?.active) {
-      setStatus(`Combat actif - Room ${activeRoom.id}`);
-    } else {
-      setStatus(`Exploration - Room ${activeRoom.id}`);
-    }
+
+    gmPanel.style.display = player?.isGM ? "block" : "none";
+
+    if (state.combat?.active) setStatus(`Combat actif - Room ${activeRoom.id}`);
+    else setStatus(`Exploration - Room ${activeRoom.id}`);
   });
 }
 
@@ -345,27 +373,13 @@ function playSpellVfx(scene: Phaser.Scene, spellId: string, from: { x: number; y
 
   if (spell?.type === "aura") {
     const aura = scene.add.circle(to.x, to.y, 20, tint, 0.6);
-    scene.tweens.add({
-      targets: aura,
-      scale: 2,
-      alpha: 0,
-      duration: 600,
-      ease: "Sine.easeOut",
-      onComplete: () => aura.destroy()
-    });
+    scene.tweens.add({ targets: aura, scale: 2, alpha: 0, duration: 600, ease: "Sine.easeOut", onComplete: () => aura.destroy() });
     return;
   }
 
   if (spell?.type === "impact") {
     const impact = scene.add.circle(to.x, to.y, 14, tint, 0.8);
-    scene.tweens.add({
-      targets: impact,
-      scale: 3,
-      alpha: 0,
-      duration: 500,
-      ease: "Sine.easeOut",
-      onComplete: () => impact.destroy()
-    });
+    scene.tweens.add({ targets: impact, scale: 3, alpha: 0, duration: 500, ease: "Sine.easeOut", onComplete: () => impact.destroy() });
     return;
   }
 
@@ -379,24 +393,19 @@ function playSpellVfx(scene: Phaser.Scene, spellId: string, from: { x: number; y
     onComplete: () => {
       projectile.destroy();
       const burst = scene.add.circle(to.x, to.y, 12, tint, 0.9);
-      scene.tweens.add({
-        targets: burst,
-        scale: 2.5,
-        alpha: 0,
-        duration: 450,
-        onComplete: () => burst.destroy()
-      });
+      scene.tweens.add({ targets: burst, scale: 2.5, alpha: 0, duration: 450, onComplete: () => burst.destroy() });
     }
   });
 }
 
 async function loadData() {
   const [racesData, classesData, spellsData, monstersData] = await Promise.all([
-    fetch("http://localhost:2567/data/races").then((res) => res.json()),
-    fetch("http://localhost:2567/data/classes").then((res) => res.json()),
-    fetch("http://localhost:2567/data/spells").then((res) => res.json()),
-    fetch("http://localhost:2567/data/monsters").then((res) => res.json())
+    fetch("/data/races").then((res) => res.json()),
+    fetch("/data/classes").then((res) => res.json()),
+    fetch("/data/spells").then((res) => res.json()),
+    fetch("/data/monsters").then((res) => res.json())
   ]);
+
   races = racesData as RaceData[];
   classes = classesData as ClassData[];
   spells = spellsData as SpellData[];
@@ -412,8 +421,21 @@ async function createRoom() {
   const name = playerNameInput.value.trim() || "MJ";
   const raceId = raceSelect.value || "human";
   const classId = classSelect.value || "fighter";
-  const newRoom = await client.create<GameStateSchema>("vtt", { name, raceId, classId });
-  enterRoom(newRoom);
+async function createRoom() {
+  const name = playerNameInput.value.trim() || "MJ";
+  const raceId = raceSelect.value || "human";
+  const classId = classSelect.value || "fighter";
+
+  room = await client.joinOrCreate("vtt", {
+    name,
+    raceId,
+    classId,
+  });
+
+  enterRoom(room);
+  roomInfo.textContent = `Code de room : ${room.id}`;
+}
+
   roomInfo.textContent = `Code de room: ${newRoom.id}`;
 }
 
@@ -426,8 +448,26 @@ async function joinRoom() {
     roomInfo.textContent = "Entrez un code.";
     return;
   }
-  const joinedRoom = await client.joinById<GameStateSchema>(code, { name, raceId, classId });
-  enterRoom(joinedRoom);
+async function joinRoom() {
+  const name = playerNameInput.value.trim() || "Aventurier";
+  const raceId = raceSelect.value || "human";
+  const classId = classSelect.value || "fighter";
+  const code = roomCodeInput.value.trim();
+
+  if (!code) {
+    roomInfo.textContent = "Entrez un code.";
+    return;
+  }
+
+  room = await client.joinById(code, {
+    name,
+    raceId,
+    classId,
+  });
+
+  enterRoom(room);
+}
+
 }
 
 function enterRoom(activeRoom: Room<GameStateSchema>) {
@@ -451,9 +491,7 @@ joinRoomBtn.addEventListener("click", () => {
 });
 
 spawnMonsterBtn.addEventListener("click", () => {
-  if (!room) {
-    return;
-  }
+  if (!room) return;
   const monsterId = monsterSelect.value;
   room.send("spawn_monster", { monsterId });
 });
@@ -467,24 +505,14 @@ toggleGridBtn.addEventListener("click", () => {
 });
 
 castSpellBtn.addEventListener("click", () => {
-  if (!room) {
-    return;
-  }
+  if (!room) return;
   const spellId = spellSelect.value;
   room.send("cast_spell", { spellId, target: lastPointer });
 });
 
-rollD20Btn.addEventListener("click", () => {
-  room?.send("roll", { kind: "d20" });
-});
-
-rollAttackBtn.addEventListener("click", () => {
-  room?.send("roll", { kind: "attack" });
-});
-
-rollSkillBtn.addEventListener("click", () => {
-  room?.send("roll", { kind: "skill" });
-});
+rollD20Btn.addEventListener("click", () => room?.send("roll", { kind: "d20" }));
+rollAttackBtn.addEventListener("click", () => room?.send("roll", { kind: "attack" }));
+rollSkillBtn.addEventListener("click", () => room?.send("roll", { kind: "skill" }));
 
 chatInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && room) {
