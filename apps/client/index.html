@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Emberfall 3</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: "Segoe UI", sans-serif;
+        background: #111827;
+        color: #f3f4f6;
+      }
+      #app {
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        position: relative;
+      }
+      .overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(17, 24, 39, 0.8);
+        z-index: 10;
+      }
+      .panel {
+        background: #1f2937;
+        padding: 24px;
+        border-radius: 12px;
+        width: 320px;
+        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+        display: grid;
+        gap: 12px;
+      }
+      .panel input,
+      .panel button {
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: none;
+        font-size: 14px;
+      }
+      .panel button {
+        background: #2563eb;
+        color: white;
+        cursor: pointer;
+      }
+      .panel button.secondary {
+        background: #4b5563;
+      }
+      .hud {
+        position: absolute;
+        top: 16px;
+        left: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        z-index: 5;
+      }
+      .hud-card {
+        background: rgba(31, 41, 55, 0.9);
+        padding: 8px 12px;
+        border-radius: 8px;
+        font-size: 13px;
+      }
+      .dialogue {
+        position: absolute;
+        bottom: 24px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(31, 41, 55, 0.95);
+        padding: 16px;
+        border-radius: 12px;
+        min-width: 320px;
+        display: none;
+        flex-direction: column;
+        gap: 12px;
+        z-index: 6;
+      }
+      .dialogue button {
+        background: #0ea5e9;
+        border: none;
+        padding: 8px 12px;
+        border-radius: 8px;
+        color: white;
+        cursor: pointer;
+      }
+      .combat-panel {
+        position: absolute;
+        right: 16px;
+        top: 16px;
+        background: rgba(31, 41, 55, 0.9);
+        padding: 12px;
+        border-radius: 10px;
+        display: none;
+        flex-direction: column;
+        gap: 10px;
+        z-index: 6;
+      }
+      .combat-panel button {
+        background: #f97316;
+        border: none;
+        padding: 8px 12px;
+        border-radius: 8px;
+        color: white;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div class="overlay" id="lobby">
+      <div class="panel">
+        <strong>Lobby multijoueur</strong>
+        <input id="playerName" placeholder="Votre pseudo" />
+        <button id="createRoom">Créer une room</button>
+        <input id="roomCode" placeholder="Code de room" />
+        <button id="joinRoom" class="secondary">Rejoindre</button>
+        <div id="roomInfo"></div>
+      </div>
+    </div>
+    <div class="hud" id="hud">
+      <div class="hud-card" id="status">Connexion...</div>
+      <div class="hud-card" id="hint">Clic droit pour bouger. Approchez-vous du PNJ et appuyez sur E.</div>
+    </div>
+    <div class="dialogue" id="dialogue">
+      <div id="dialogueText"></div>
+      <div id="dialogueChoices"></div>
+    </div>
+    <div class="combat-panel" id="combatPanel">
+      <strong>Combat</strong>
+      <div id="combatTurn"></div>
+      <button id="endTurn">Fin du tour</button>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+    <script>
+      window.addEventListener("contextmenu", (event) => event.preventDefault());
+    </script>
+  </body>
+</html>
