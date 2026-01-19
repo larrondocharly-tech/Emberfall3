@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { Client, Room } from "colyseus.js";
 import type { ClassData, MonsterData, RaceData, SpellData } from "@emberfall3/shared";
 import { WS_BASE } from "./config";
+import { dataApi } from "./lib/dataApi";
 
 const SERVER_URL = WS_BASE;
 const WORLD_WIDTH = 1024;
@@ -397,10 +398,10 @@ function playSpellVfx(scene: Phaser.Scene, spellId: string, from: { x: number; y
 
 async function loadData() {
   const [racesData, classesData, spellsData, monstersData] = await Promise.all([
-    fetch("/data/races").then((res) => res.json()),
-    fetch("/data/classes").then((res) => res.json()),
-    fetch("/data/spells").then((res) => res.json()),
-    fetch("/data/monsters").then((res) => res.json())
+    dataApi.races(),
+    dataApi.classes(),
+    dataApi.spells(),
+    dataApi.monsters()
   ]);
   races = racesData as RaceData[];
   classes = classesData as ClassData[];
@@ -504,7 +505,8 @@ chatInput.addEventListener("keydown", (event) => {
 setStatus("En attente de connexion...");
 
 loadData().catch(() => {
-  roomInfo.textContent = "Impossible de charger les données. Lancez le serveur.";
+  roomInfo.textContent =
+    "Serveur data indisponible. Vérifiez que le serveur tourne sur http://localhost:2567.";
 });
 
 void game;
