@@ -1,0 +1,52 @@
+[
+  {
+    "id": "village_sage",
+    "start": "start",
+    "nodes": [
+      {
+        "id": "start",
+        "text": "Bienvenue, aventurier. Que souhaites-tu ?",
+        "choices": [
+          {
+            "id": "training",
+            "label": "Demander un entrainement",
+            "action": "startCombat",
+            "setFlags": {
+              "askedTraining": true
+            }
+          },
+          {
+            "id": "story",
+            "label": "Ecouter une histoire",
+            "next": "story",
+            "setFlags": {
+              "heardStory": true
+            }
+          }
+        ]
+      },
+      {
+        "id": "story",
+        "text": "Le village est calme, mais les ruines au nord cachent un grand pouvoir.",
+        "choices": [
+          {
+            "id": "thanks",
+            "label": "Remercier et partir",
+            "action": "endDialogue",
+            "setFlags": {
+              "thankedSage": true
+            }
+          },
+          {
+            "id": "challenge",
+            "label": "Defier le sage",
+            "action": "startCombat",
+            "setFlags": {
+              "challengedSage": true
+            }
+          }
+        ]
+      }
+    ]
+  }
+]
