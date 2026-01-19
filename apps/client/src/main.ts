@@ -1,21 +1,8 @@
 import Phaser from "phaser";
-import { Client as ColyseusClient, Room } from "colyseus.js";
-import { Client } from "colyseus.js";
+import { Client, Room } from "colyseus.js";
 import type { ClassData, MonsterData, RaceData, SpellData } from "@emberfall3/shared";
-
-/**
- * ✅ BLOQUER LE MENU CLIC DROIT TOUT DE SUITE (AVANT TOUT)
- * Sinon le navigateur prend la priorité et Phaser reçoit parfois rien.
- */
-window.addEventListener(
-  "contextmenu",
-  (e) => {
-    e.preventDefault();
-  },
-  { passive: false }
-);
-
 import { WS_BASE } from "./config";
+
 const SERVER_URL = WS_BASE;
 const WORLD_WIDTH = 1024;
 const WORLD_HEIGHT = 768;
@@ -69,8 +56,8 @@ type CombatStateSchema = {
 };
 
 type GameStateSchema = {
-  players: Map<string, PlayerSchema>;
-  tokens: Map<string, TokenSchema>;
+  players: Record<string, PlayerSchema>;
+  tokens: Record<string, TokenSchema>;
   obstacles: ObstacleSchema[];
   combat: CombatStateSchema;
 };
@@ -101,8 +88,9 @@ const chatInput = document.getElementById("chatInput") as HTMLInputElement;
 const raceSelect = document.getElementById("raceSelect") as HTMLSelectElement;
 const classSelect = document.getElementById("classSelect") as HTMLSelectElement;
 
-let room: any = null;
-let sessionId = "";
+const client = new Client(SERVER_URL);
+let room: Room<any> | null = null;
+let sessionId: string | null = null;
 let gridVisible = true;
 let races: RaceData[] = [];
 let classes: ClassData[] = [];
@@ -189,31 +177,17 @@ class GameScene extends Phaser.Scene {
     });
   }
 
-update() {
-  // ✅ Guard: pas de room / pas de state => on ne fait rien
-  if (!room) return;
-
-  const state: any = room.state;
-  if (!state) return; // ✅ évite "state is null"
-
-  // ⚠️ Enlève le spam
-  // console.log("step");  // ❌ supprime
-
-  // Exemple : si tu as des renderers
-  // (garde tes fonctions existantes)
-  try {
-    // si ton code attend state.obstacles
+  update() {
+    if (!room || !room.state) {
+      return;
+    }
+    const state = room.state as GameStateSchema;
     const obstacles = Array.isArray(state.obstacles) ? state.obstacles : [];
-    this.renderObstacles?.(obstacles);
-
-    // si ton code attend state.players
-    const players = state.players ?? {};
-    this.renderPlayers?.(players);
-
-    // ... ton reste de logique update (caméra, drag, etc.)
-  } catch (e) {
-    // optionnel : évite de crasher la boucle
-    console.error("update error:", e);
+    const tokens = state.tokens ?? {};
+    this.renderObstacles(obstacles);
+    this.renderTokens(tokens);
+    this.renderGrid();
+    this.renderCombatGrid(state.combat as CombatStateSchema);
   }
 }
 
@@ -272,8 +246,8 @@ update() {
     }
   }
 
-  private renderTokens(tokens: Map<string, TokenSchema>) {
-    tokens.forEach((token, id) => {
+  private renderTokens(tokens: Record<string, TokenSchema>) {
+    Object.entries(tokens).forEach(([id, token]) => {
       let sprite = this.tokenSprites.get(id);
       let label = this.nameLabels.get(id);
 
@@ -291,7 +265,7 @@ update() {
     });
 
     Array.from(this.tokenSprites.keys()).forEach((id) => {
-      if (!tokens.has(id)) {
+      if (!tokens[id]) {
         this.tokenSprites.get(id)?.destroy();
         this.nameLabels.get(id)?.destroy();
         this.tokenSprites.delete(id);
@@ -317,17 +291,15 @@ const game = new Phaser.Game({
   scene: [GameScene]
 });
 
-// ✅ On garde ça aussi (ceinture + bretelles)
-game.canvas.oncontextmenu = (e) => e.preventDefault();
-
-const client = new ColyseusClient(SERVER_URL);
-
 function setStatus(text: string) {
   statusText.textContent = text;
 }
 
 function getOwnPlayer() {
-  return room?.state.players.get(sessionId);
+  if (!room || !room.state || !sessionId) {
+    return null;
+  }
+  return room.state.players[sessionId];
 }
 
 function getOwnTokenId() {
@@ -335,7 +307,7 @@ function getOwnTokenId() {
 }
 
 function resolveTokenName(id: string) {
-  const token = room?.state.tokens.get(id);
+  const token = room?.state.tokens?.[id];
   return token?.name ?? id;
 }
 
@@ -357,12 +329,17 @@ function attachRoomListeners(activeRoom: Room<GameStateSchema>) {
 
   activeRoom.onStateChange(() => {
     const state = activeRoom.state as GameStateSchema;
-    const player = state.players.get(sessionId);
-
-    gmPanel.style.display = player?.isGM ? "block" : "none";
-
-    if (state.combat?.active) setStatus(`Combat actif - Room ${activeRoom.id}`);
-    else setStatus(`Exploration - Room ${activeRoom.id}`);
+    const player = sessionId ? state.players[sessionId] : null;
+    if (player?.isGM) {
+      gmPanel.style.display = "block";
+    } else {
+      gmPanel.style.display = "none";
+    }
+    if (state.combat?.active) {
+      setStatus(`Combat actif - Room ${activeRoom.id}`);
+    } else {
+      setStatus(`Exploration - Room ${activeRoom.id}`);
+    }
   });
 }
 
@@ -421,22 +398,9 @@ async function createRoom() {
   const name = playerNameInput.value.trim() || "MJ";
   const raceId = raceSelect.value || "human";
   const classId = classSelect.value || "fighter";
-async function createRoom() {
-  const name = playerNameInput.value.trim() || "MJ";
-  const raceId = raceSelect.value || "human";
-  const classId = classSelect.value || "fighter";
-
-  room = await client.joinOrCreate("vtt", {
-    name,
-    raceId,
-    classId,
-  });
-
+  room = await client.joinOrCreate("vtt", { name, raceId, classId });
   enterRoom(room);
   roomInfo.textContent = `Code de room : ${room.id}`;
-}
-
-  roomInfo.textContent = `Code de room: ${newRoom.id}`;
 }
 
 async function joinRoom() {
@@ -470,7 +434,7 @@ async function joinRoom() {
 
 }
 
-function enterRoom(activeRoom: Room<GameStateSchema>) {
+function enterRoom(activeRoom: Room<any>) {
   room = activeRoom;
   sessionId = activeRoom.sessionId;
   lobby.style.display = "none";
