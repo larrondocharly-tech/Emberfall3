@@ -69,6 +69,43 @@ type GameState = {
 
 const SPEED = 180;
 
+type DataStore = {
+  races: RaceData[];
+  classes: ClassData[];
+  spells: SpellData[];
+  monsters: MonsterData[];
+};
+
+const DATA_BASE_URL = new URL("../data/", import.meta.url);
+
+function readJsonFile<T>(url: URL): T {
+  const filePath = fileURLToPath(url);
+  const raw = readFileSync(filePath, "utf-8");
+  return JSON.parse(raw) as T;
+}
+
+function loadDataFiles(): DataStore {
+  return {
+    races: readJsonFile<RaceData[]>(new URL("races.json", DATA_BASE_URL)),
+    classes: readJsonFile<ClassData[]>(new URL("classes.json", DATA_BASE_URL)),
+    spells: readJsonFile<SpellData[]>(new URL("spells.json", DATA_BASE_URL)),
+    monsters: readJsonFile<MonsterData[]>(new URL("monsters.json", DATA_BASE_URL))
+  };
+}
+
+let dataStore: DataStore = {
+  races: [],
+  classes: [],
+  spells: [],
+  monsters: []
+};
+
+try {
+  dataStore = loadDataFiles();
+} catch (error) {
+  console.error("Failed to load data files:", error);
+}
+
 class VttRoom extends Room<GameState> {
   private races: RaceData[] = [];
   private classes: ClassData[] = [];
@@ -336,17 +373,10 @@ class VttRoom extends Room<GameState> {
   }
 
   private loadData() {
-    const baseUrl = new URL("../data/", import.meta.url);
-    this.races = this.readJson<RaceData[]>(new URL("races.json", baseUrl));
-    this.classes = this.readJson<ClassData[]>(new URL("classes.json", baseUrl));
-    this.spells = this.readJson<SpellData[]>(new URL("spells.json", baseUrl));
-    this.monsters = this.readJson<MonsterData[]>(new URL("monsters.json", baseUrl));
-  }
-
-  private readJson<T>(url: URL): T {
-    const filePath = fileURLToPath(url);
-    const raw = readFileSync(filePath, "utf-8");
-    return JSON.parse(raw) as T;
+    this.races = dataStore.races;
+    this.classes = dataStore.classes;
+    this.spells = dataStore.spells;
+    this.monsters = dataStore.monsters;
   }
 
   private seedObstacles() {
@@ -461,22 +491,22 @@ app.get("/health", (_req, res) => {
 
 app.get("/data/races", (_req, res) => {
   console.log("[data] races");
-  res.json([{ id: "human", name: "Human" }]);
+  res.json(dataStore.races);
 });
 
 app.get("/data/classes", (_req, res) => {
   console.log("[data] classes");
-  res.json([{ id: "fighter", name: "Fighter" }]);
+  res.json(dataStore.classes);
 });
 
 app.get("/data/spells", (_req, res) => {
   console.log("[data] spells");
-  res.json([]);
+  res.json(dataStore.spells);
 });
 
 app.get("/data/monsters", (_req, res) => {
   console.log("[data] monsters");
-  res.json([]);
+  res.json(dataStore.monsters);
 });
 
 app.get("/", (_req, res) => {
