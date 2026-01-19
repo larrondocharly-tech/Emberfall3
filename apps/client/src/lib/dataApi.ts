@@ -1,8 +1,7 @@
 import type { ClassData, MonsterData, RaceData, SpellData } from "@emberfall3/shared";
+import { DATA_BASE } from "../config";
 
 type DataResource = "races" | "classes" | "spells" | "monsters";
-
-const DATA_BASE = "/data";
 
 export async function fetchJson<T>(resource: DataResource): Promise<T> {
   const url = `${DATA_BASE}/${resource}`;
