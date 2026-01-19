@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { Client, Room } from "colyseus.js";
 import type { ClassData, MonsterData, RaceData, SpellData } from "@emberfall3/shared";
 import { WS_BASE } from "./config";
+import { dataApi } from "./lib/dataApi";
 
 const SERVER_URL = WS_BASE;
 const WORLD_WIDTH = 1024;
@@ -397,10 +398,10 @@ function playSpellVfx(scene: Phaser.Scene, spellId: string, from: { x: number; y
 
 async function loadData() {
   const [racesData, classesData, spellsData, monstersData] = await Promise.all([
-    fetch("/data/races").then((res) => res.json()),
-    fetch("/data/classes").then((res) => res.json()),
-    fetch("/data/spells").then((res) => res.json()),
-    fetch("/data/monsters").then((res) => res.json())
+    dataApi.races(),
+    dataApi.classes(),
+    dataApi.spells(),
+    dataApi.monsters()
   ]);
   races = racesData as RaceData[];
   classes = classesData as ClassData[];
@@ -414,25 +415,35 @@ async function loadData() {
 }
 
 async function createRoom() {
-  const name = playerNameInput.value.trim() || "MJ";
-  const raceId = raceSelect.value || "human";
-  const classId = classSelect.value || "fighter";
-  room = await client.joinOrCreate("vtt", { name, raceId, classId });
-  enterRoom(room);
-  roomInfo.textContent = `Code de room : ${room.id}`;
+  try {
+    const name = playerNameInput.value.trim() || "MJ";
+    const raceId = raceSelect.value || "human";
+    const classId = classSelect.value || "fighter";
+    room = await client.joinOrCreate("vtt", { name, raceId, classId });
+    enterRoom(room);
+    roomInfo.textContent = `Code de room : ${room.id}`;
+  } catch (error) {
+    console.error("Failed to create room:", error);
+    roomInfo.textContent = "Serveur de jeu indisponible (Colyseus non lancé).";
+  }
 }
 
 async function joinRoom() {
-  const name = playerNameInput.value.trim() || "Aventurier";
-  const raceId = raceSelect.value || "human";
-  const classId = classSelect.value || "fighter";
-  const code = roomCodeInput.value.trim();
-  if (!code) {
-    roomInfo.textContent = "Entrez un code.";
-    return;
+  try {
+    const name = playerNameInput.value.trim() || "Aventurier";
+    const raceId = raceSelect.value || "human";
+    const classId = classSelect.value || "fighter";
+    const code = roomCodeInput.value.trim();
+    if (!code) {
+      roomInfo.textContent = "Entrez un code.";
+      return;
+    }
+    room = await client.joinById(code, { name, raceId, classId });
+    enterRoom(room);
+  } catch (error) {
+    console.error("Failed to join room:", error);
+    roomInfo.textContent = "Serveur de jeu indisponible (Colyseus non lancé).";
   }
-  room = await client.joinById(code, { name, raceId, classId });
-  enterRoom(room);
 }
 
 function enterRoom(activeRoom: Room<any>) {
@@ -444,15 +455,11 @@ function enterRoom(activeRoom: Room<any>) {
 }
 
 createRoomBtn.addEventListener("click", () => {
-  createRoom().catch((error) => {
-    roomInfo.textContent = `Erreur: ${error.message}`;
-  });
+  void createRoom();
 });
 
 joinRoomBtn.addEventListener("click", () => {
-  joinRoom().catch((error) => {
-    roomInfo.textContent = `Erreur: ${error.message}`;
-  });
+  void joinRoom();
 });
 
 spawnMonsterBtn.addEventListener("click", () => {
@@ -503,8 +510,9 @@ chatInput.addEventListener("keydown", (event) => {
 
 setStatus("En attente de connexion...");
 
-loadData().catch(() => {
-  roomInfo.textContent = "Impossible de charger les données. Lancez le serveur.";
+loadData().catch((error) => {
+  console.error("Failed to load local data:", error);
+  roomInfo.textContent = "Impossible de charger les données locales.";
 });
 
 void game;
