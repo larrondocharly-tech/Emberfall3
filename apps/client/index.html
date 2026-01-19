@@ -3,13 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Emberfall 3</title>
+    <title>Emberfall VTT</title>
     <style>
       body {
         margin: 0;
         font-family: "Segoe UI", sans-serif;
-        background: #111827;
-        color: #f3f4f6;
+        background: #0f172a;
+        color: #f8fafc;
       }
       #app {
         width: 100vw;
@@ -23,19 +23,20 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background: rgba(17, 24, 39, 0.8);
+        background: rgba(15, 23, 42, 0.85);
         z-index: 10;
       }
       .panel {
-        background: #1f2937;
+        background: #1e293b;
         padding: 24px;
         border-radius: 12px;
-        width: 320px;
-        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+        width: 340px;
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
         display: grid;
         gap: 12px;
       }
       .panel input,
+      .panel select,
       .panel button {
         padding: 10px 12px;
         border-radius: 8px;
@@ -43,55 +44,66 @@
         font-size: 14px;
       }
       .panel button {
-        background: #2563eb;
-        color: white;
+        background: #38bdf8;
+        color: #0f172a;
         cursor: pointer;
+        font-weight: 600;
       }
       .panel button.secondary {
-        background: #4b5563;
+        background: #475569;
+        color: #f8fafc;
       }
       .hud {
         position: absolute;
-        top: 16px;
-        left: 16px;
+        top: 12px;
+        left: 12px;
         display: flex;
         flex-direction: column;
         gap: 8px;
         z-index: 5;
+        max-width: 320px;
       }
       .hud-card {
-        background: rgba(31, 41, 55, 0.9);
-        padding: 8px 12px;
+        background: rgba(30, 41, 59, 0.95);
+        padding: 10px 12px;
         border-radius: 8px;
         font-size: 13px;
       }
-      .dialogue {
-        position: absolute;
-        bottom: 24px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: rgba(31, 41, 55, 0.95);
-        padding: 16px;
-        border-radius: 12px;
-        min-width: 320px;
-        display: none;
-        flex-direction: column;
-        gap: 12px;
-        z-index: 6;
+      .hud-card strong {
+        display: block;
+        margin-bottom: 6px;
       }
-      .dialogue button {
-        background: #0ea5e9;
+      .hud-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .hud button,
+      .hud select {
+        padding: 6px 10px;
+        border-radius: 6px;
         border: none;
-        padding: 8px 12px;
-        border-radius: 8px;
-        color: white;
+        font-size: 12px;
+      }
+      .hud button {
+        background: #22c55e;
+        color: #0f172a;
         cursor: pointer;
+        font-weight: 600;
+      }
+      .hud button.secondary {
+        background: #f97316;
+        color: #0f172a;
+      }
+      .hud button.ghost {
+        background: #334155;
+        color: #f8fafc;
       }
       .combat-panel {
         position: absolute;
         right: 16px;
         top: 16px;
-        background: rgba(31, 41, 55, 0.9);
+        background: rgba(30, 41, 59, 0.95);
         padding: 12px;
         border-radius: 10px;
         display: none;
@@ -99,13 +111,32 @@
         gap: 10px;
         z-index: 6;
       }
-      .combat-panel button {
-        background: #f97316;
+      .chat {
+        position: absolute;
+        bottom: 16px;
+        left: 16px;
+        width: 320px;
+        background: rgba(15, 23, 42, 0.85);
+        padding: 12px;
+        border-radius: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        z-index: 6;
+      }
+      .chat-log {
+        height: 160px;
+        overflow-y: auto;
+        font-size: 12px;
+        background: rgba(30, 41, 59, 0.6);
+        padding: 8px;
+        border-radius: 6px;
+      }
+      .chat input {
+        padding: 8px;
+        border-radius: 6px;
         border: none;
-        padding: 8px 12px;
-        border-radius: 8px;
-        color: white;
-        cursor: pointer;
+        font-size: 12px;
       }
     </style>
   </head>
@@ -113,27 +144,66 @@
     <div id="app"></div>
     <div class="overlay" id="lobby">
       <div class="panel">
-        <strong>Lobby multijoueur</strong>
+        <strong>Lobby VTT</strong>
         <input id="playerName" placeholder="Votre pseudo" />
+        <select id="raceSelect"></select>
+        <select id="classSelect"></select>
         <button id="createRoom">Créer une room</button>
         <input id="roomCode" placeholder="Code de room" />
         <button id="joinRoom" class="secondary">Rejoindre</button>
         <div id="roomInfo"></div>
       </div>
     </div>
+
     <div class="hud" id="hud">
       <div class="hud-card" id="status">Connexion...</div>
-      <div class="hud-card" id="hint">Clic droit pour bouger. Approchez-vous du PNJ et appuyez sur E.</div>
+      <div class="hud-card" id="controls">
+        <strong>Contrôles</strong>
+        <div>Clic droit: déplacer | Molette: zoom | Drag: pan</div>
+        <div>Clic droit en combat: déplacement par cases</div>
+        <div class="hud-row" style="margin-top: 8px;">
+          <button id="toggleGrid" class="ghost">Toggle Grille</button>
+        </div>
+      </div>
+      <div class="hud-card" id="gmPanel" style="display: none;">
+        <strong>GM</strong>
+        <div class="hud-row">
+          <select id="monsterSelect"></select>
+          <button id="spawnMonster">Spawn</button>
+        </div>
+        <div class="hud-row">
+          <button id="startCombat" class="secondary">Start Combat</button>
+        </div>
+      </div>
+      <div class="hud-card" id="spells">
+        <strong>Spells</strong>
+        <div class="hud-row">
+          <select id="spellSelect"></select>
+          <button id="castSpell" class="ghost">Cast</button>
+        </div>
+      </div>
+      <div class="hud-card" id="dice">
+        <strong>Dice</strong>
+        <div class="hud-row">
+          <button id="rollD20">Roll d20</button>
+          <button id="rollAttack" class="secondary">Roll Attack</button>
+          <button id="rollSkill" class="ghost">Roll Skill</button>
+        </div>
+      </div>
     </div>
-    <div class="dialogue" id="dialogue">
-      <div id="dialogueText"></div>
-      <div id="dialogueChoices"></div>
-    </div>
+
     <div class="combat-panel" id="combatPanel">
       <strong>Combat</strong>
       <div id="combatTurn"></div>
+      <div id="turnOrder"></div>
       <button id="endTurn">Fin du tour</button>
     </div>
+
+    <div class="chat" id="chat">
+      <div class="chat-log" id="chatLog"></div>
+      <input id="chatInput" placeholder="Message..." />
+    </div>
+
     <script type="module" src="/src/main.ts"></script>
     <script>
       window.addEventListener("contextmenu", (event) => event.preventDefault());
