@@ -26,6 +26,7 @@ npm run dev
 
 - Serveur: http://localhost:2567
 - Client: http://localhost:5173
+- Vérification rapide: ouvrir le lobby et confirmer que les listes races/classes/sorts/monstres chargent sans erreur 500.
 
 ## Tester à 2 joueurs (2 onglets)
 1. Ouvrir `http://localhost:5173` dans un premier onglet.
