@@ -1,0 +1,20 @@
+[
+  {
+    "id": "human",
+    "name": "Humain",
+    "dexBonus": 1,
+    "hpBonus": 2
+  },
+  {
+    "id": "elf",
+    "name": "Elfe",
+    "dexBonus": 3,
+    "hpBonus": 0
+  },
+  {
+    "id": "dwarf",
+    "name": "Nain",
+    "dexBonus": 0,
+    "hpBonus": 4
+  }
+]
