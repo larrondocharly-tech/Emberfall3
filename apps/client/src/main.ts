@@ -6,12 +6,16 @@ import { FEATURE_MULTIPLAYER } from "./config/features";
 import { createLocalAdapter } from "./adapters/localAdapter";
 import { createNetworkAdapter } from "./adapters/networkAdapter";
 import type { GameAdapter } from "./adapters/types";
-import type { PlayerProfile, Session } from "./game/state";
+import type { GameToken, PlayerProfile, Session, TokenType } from "./game/state";
 import { initialState } from "./game/state";
 import { applyAction } from "./game/reducer";
 import { findSessionById } from "./game/engine";
 import { defaultTool, toolLabels } from "./game/tools";
 import type { Tool } from "./game/tools";
+import type { Scene } from "./game/scenes";
+import { scenes } from "./game/scenes";
+import { chebyshevDistance, isInMeleeRange, resolveAttack } from "./game/combat";
+import { rollD20 } from "./game/dice";
 import { createTopBar } from "./ui/vtt/TopBar";
 import { createLeftToolbar } from "./ui/vtt/LeftToolbar";
 import type { SidebarTab } from "./ui/vtt/RightSidebar";
@@ -135,12 +139,395 @@ function clampZoom(value: number) {
   return Math.min(2, Math.max(0.6, value));
 }
 
+const scenePlaceholders = new Map<string, string>();
+
+function createScenePlaceholder(scene: Scene) {
+  const cached = scenePlaceholders.get(scene.id);
+  if (cached) {
+    return cached;
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = 1200;
+  canvas.height = 800;
+  const context = canvas.getContext("2d");
+  if (context) {
+    context.fillStyle = "#0f172a";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#1f2937";
+    context.fillRect(40, 40, canvas.width - 80, canvas.height - 80);
+    context.strokeStyle = "#334155";
+    context.lineWidth = 6;
+    context.strokeRect(40, 40, canvas.width - 80, canvas.height - 80);
+    context.fillStyle = "#f8fafc";
+    context.font = "bold 42px sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(`${scene.name} (placeholder)`, canvas.width / 2, canvas.height / 2);
+  }
+  const dataUrl = canvas.toDataURL("image/png");
+  scenePlaceholders.set(scene.id, dataUrl);
+  return dataUrl;
+}
+
+function applySceneMap(scene: Scene) {
+  if (!canvasMapLayer) {
+    return;
+  }
+  const placeholderUrl = createScenePlaceholder(scene);
+  canvasMapLayer.style.backgroundImage = `url("${placeholderUrl}")`;
+  const image = new Image();
+  image.onload = () => {
+    if (gameState.scene.id !== scene.id) {
+      return;
+    }
+    canvasMapLayer.style.backgroundImage = `url("${scene.mapUrl}")`;
+  };
+  image.onerror = () => {
+    if (gameState.scene.id !== scene.id) {
+      return;
+    }
+    canvasMapLayer.style.backgroundImage = `url("${placeholderUrl}")`;
+  };
+  image.src = scene.mapUrl;
+}
+
+function resetCameraToScene(scene: Scene) {
+  zoomLevel = clampZoom(scene.initialZoom);
+  panOffset = { x: scene.initialPanX, y: scene.initialPanY };
+  updateCanvasTransform();
+}
+
+function applyScene(scene: Scene, options: { resetCamera?: boolean; recenterToken?: boolean } = {}) {
+  const { resetCamera = true, recenterToken = false } = options;
+  gameState = { ...gameState, scene };
+  gridSize = scene.gridSize;
+  const centerX = Math.floor(scene.gridSize / 2);
+  const centerY = Math.floor(scene.gridSize / 2);
+  gameState.tokens = gameState.tokens.map((token) => {
+    const next = {
+      ...token,
+      x: Math.max(0, Math.min(scene.gridSize - 1, token.x)),
+      y: Math.max(0, Math.min(scene.gridSize - 1, token.y))
+    };
+    if (recenterToken && token.type === "player") {
+      next.x = centerX;
+      next.y = centerY;
+    }
+    return next;
+  });
+  if (!getTokenById(selectedTokenId)) {
+    selectedTokenId = gameState.tokens[0]?.id ?? null;
+  }
+  isMeasuring = false;
+  measureStart = null;
+  measureEnd = null;
+  isDrawing = false;
+  drawStart = null;
+  drawEnd = null;
+  drawZones = [];
+  if (resetCamera) {
+    resetCameraToScene(scene);
+  }
+  applySceneMap(scene);
+  if (topBarStatus) {
+    topBarStatus.textContent = `Solo · Scene: ${scene.name}`;
+  }
+  renderGameGrid();
+}
+
+function selectToken(id: string | null) {
+  selectedTokenId = id;
+  renderGameGrid();
+  if (activeSession) {
+    renderActorsPanel(activeSession);
+  }
+}
+
+function updateTokenPosition(id: string, position: { x: number; y: number }) {
+  gameState = {
+    ...gameState,
+    tokens: gameState.tokens.map((token) =>
+      token.id === id ? { ...token, x: position.x, y: position.y } : token
+    )
+  };
+  if (combatState.enabled && combatState.started && id === getActiveCombatTokenId()) {
+    combatState = {
+      ...combatState,
+      actionState: { ...combatState.actionState, hasMoved: true }
+    };
+  }
+}
+
+function addToken(type: TokenType) {
+  const center = Math.floor(gridSize / 2);
+  const defaults =
+    type === "monster"
+      ? { hp: 10, maxHp: 10, ac: 12, attackBonus: 4, initBonus: 2, damage: "1d8+2", color: "#f87171" }
+      : { hp: 8, maxHp: 8, ac: 12, attackBonus: 3, initBonus: 1, damage: "1d6+1", color: "#22c55e" };
+  const token: GameToken = {
+    id: `${type}-${tokenIdCounter++}`,
+    name: type === "monster" ? "Monstre" : "PNJ",
+    x: center,
+    y: center,
+    size: 1,
+    color: defaults.color,
+    type,
+    hp: defaults.hp,
+    maxHp: defaults.maxHp,
+    ac: defaults.ac,
+    attackBonus: defaults.attackBonus,
+    initBonus: defaults.initBonus,
+    damage: defaults.damage
+  };
+  gameState = { ...gameState, tokens: [...gameState.tokens, token] };
+  selectToken(token.id);
+}
+
+function getTokenById(id: string | null) {
+  if (!id) {
+    return null;
+  }
+  return gameState.tokens.find((token) => token.id === id) ?? null;
+}
+
+function getTokenIdFromEvent(event: PointerEvent) {
+  const target = event.target as HTMLElement | null;
+  if (!target) {
+    return null;
+  }
+  const tokenEl = target.closest<HTMLElement>(".vtt-token");
+  return tokenEl?.dataset.tokenId ?? null;
+}
+
+function updateCombatToggle() {
+  if (!combatToggleBtn) {
+    return;
+  }
+  combatToggleBtn.textContent = combatState.enabled ? "Combat: ON" : "Combat: OFF";
+  combatToggleBtn.classList.toggle("active", combatState.enabled);
+}
+
+function getDistanceBetweenTokens(attacker: GameToken, target: GameToken) {
+  return chebyshevDistance(attacker, target);
+}
+
+function appendChatMessage(message: string) {
+  appendChat(message);
+}
+
+function getActiveCombatTokenId() {
+  if (!combatState.started) {
+    return null;
+  }
+  return combatState.initiativeOrder[combatState.activeIndex] ?? null;
+}
+
+function getActiveCombatToken() {
+  const tokenId = getActiveCombatTokenId();
+  return getTokenById(tokenId);
+}
+
+function updateCombatInfo() {
+  if (!combatInfo) {
+    return;
+  }
+  if (vttEndTurnBtn) {
+    vttEndTurnBtn.style.display = combatState.enabled ? "inline-flex" : "none";
+  }
+  if (!combatState.enabled) {
+    combatInfo.textContent = "Exploration";
+    return;
+  }
+  if (!combatState.started) {
+    combatInfo.textContent = "Combat (préparation)";
+    if (vttEndTurnBtn) {
+      vttEndTurnBtn.disabled = true;
+    }
+    return;
+  }
+  const activeToken = getActiveCombatToken();
+  const activeName = activeToken?.name ?? "—";
+  combatInfo.textContent = `Round ${combatState.round} · Tour de ${activeName}`;
+  if (vttEndTurnBtn) {
+    vttEndTurnBtn.disabled = false;
+  }
+}
+
+function startCombat() {
+  if (!combatState.enabled || combatState.started) {
+    return;
+  }
+  const rolls = gameState.tokens.map((token) => ({
+    id: token.id,
+    name: token.name,
+    total: rollD20() + token.initBonus
+  }));
+  rolls.sort((a, b) => b.total - a.total);
+  combatState = {
+    ...combatState,
+    started: true,
+    initiativeOrder: rolls.map((roll) => roll.id),
+    activeIndex: 0,
+    round: 1,
+    actionState: { hasMoved: false, hasActed: false }
+  };
+  appendChatMessage("Combat démarré.");
+  appendChatMessage(
+    `Ordre d'initiative: ${rolls.map((roll) => `${roll.name}(${roll.total})`).join(", ")}.`
+  );
+  const activeToken = getActiveCombatToken();
+  if (activeToken) {
+    appendChatMessage(`Tour ${combatState.round}: ${activeToken.name}.`);
+  }
+  updateCombatInfo();
+  if (activeSession) {
+    renderActorsPanel(activeSession);
+  }
+  renderGameGrid();
+}
+
+function resetCombat() {
+  combatState = {
+    ...combatState,
+    enabled: false,
+    started: false,
+    initiativeOrder: [],
+    activeIndex: 0,
+    round: 0,
+    actionState: { hasMoved: false, hasActed: false }
+  };
+  appendChatMessage("Fin du combat.");
+  updateCombatInfo();
+  renderGameGrid();
+  if (activeSession) {
+    renderActorsPanel(activeSession);
+  }
+}
+
+function endTurn() {
+  if (!combatState.enabled || !combatState.started) {
+    return;
+  }
+  if (attackState) {
+    setAttackState(null);
+  }
+  const nextIndex = combatState.activeIndex + 1;
+  let nextRound = combatState.round;
+  let activeIndex = nextIndex;
+  if (nextIndex >= combatState.initiativeOrder.length) {
+    activeIndex = 0;
+    nextRound = combatState.round + 1;
+    appendChatMessage(`Round ${nextRound}.`);
+  }
+  combatState = {
+    ...combatState,
+    activeIndex,
+    round: nextRound,
+    actionState: { hasMoved: false, hasActed: false }
+  };
+  const activeToken = getActiveCombatToken();
+  if (activeToken) {
+    appendChatMessage(`Tour: ${activeToken.name}.`);
+  }
+  updateCombatInfo();
+  if (activeSession) {
+    renderActorsPanel(activeSession);
+  }
+  renderGameGrid();
+}
+
+function setAttackState(attackerId: string | null) {
+  attackState = attackerId ? { attackerId, awaitingTarget: true } : null;
+  hoveredTokenId = null;
+  if (canvasViewport) {
+    if (attackState) {
+      canvasViewport.style.cursor = "crosshair";
+    } else {
+      setActiveTool(activeTool);
+    }
+  }
+  renderGameGrid();
+  if (activeSession) {
+    renderActorsPanel(activeSession);
+  }
+}
+
+function clearMeasure() {
+  if (!isMeasuring && !measureStart && !measureEnd) {
+    measureLocked = false;
+    return;
+  }
+  isMeasuring = false;
+  measureLocked = false;
+  measureStart = null;
+  measureEnd = null;
+  renderGameGrid();
+}
+
+function handleAttackTarget(targetId: string) {
+  if (!attackState || !combatState.enabled) {
+    return;
+  }
+  const attacker = getTokenById(attackState.attackerId);
+  const target = getTokenById(targetId);
+  if (!attacker || !target) {
+    setAttackState(null);
+    return;
+  }
+  if (attacker.id === target.id) {
+    appendChatMessage(`${attacker.name} ne peut pas s'attaquer lui-même.`);
+    setAttackState(null);
+    return;
+  }
+  const activeTokenId = getActiveCombatTokenId();
+  if (combatState.started && activeTokenId && attacker.id !== activeTokenId) {
+    appendChatMessage("Ce n'est pas son tour.");
+    setAttackState(null);
+    return;
+  }
+  if (combatState.actionState.hasActed) {
+    appendChatMessage("Action déjà utilisée.");
+    setAttackState(null);
+    return;
+  }
+  const distance = getDistanceBetweenTokens(attacker, target);
+  if (!isInMeleeRange(attacker, target)) {
+    appendChatMessage(`Hors portée (${distance} cases).`);
+    setAttackState(null);
+    return;
+  }
+  const result = resolveAttack(attacker, target);
+  const rollText = `${result.roll} + ${attacker.attackBonus} = ${result.total}`;
+  const outcome = result.hit ? "HIT" : "MISS";
+  appendChatMessage(
+    `${attacker.name} attaque ${target.name}: d20(${rollText}) vs AC ${target.ac} → ${outcome}`
+  );
+  if (result.hit) {
+    const rolls = result.damageRolls.length ? result.damageRolls.join(", ") : "-";
+    const damageText = `${attacker.damage} [${rolls}]`;
+    gameState = {
+      ...gameState,
+      tokens: gameState.tokens.map((token) =>
+        token.id === target.id ? { ...token, hp: result.remainingHp } : token
+      )
+    };
+    appendChatMessage(`Dégâts: ${damageText} = ${result.damageTotal}. PV ${target.name}: ${result.remainingHp}/${target.maxHp}`);
+    if (activeSession) {
+      renderActorsPanel(activeSession);
+    }
+  }
+  combatState = {
+    ...combatState,
+    actionState: { ...combatState.actionState, hasActed: true }
+  };
+  setAttackState(null);
+  renderGameGrid();
+}
+
 function setActiveTool(tool: Tool) {
   activeTool = tool;
   if (tool !== "measure") {
-    isMeasuring = false;
-    measureStart = null;
-    measureEnd = null;
+    clearMeasure();
   }
   if (tool !== "draw") {
     isDrawing = false;
@@ -149,6 +536,18 @@ function setActiveTool(tool: Tool) {
   }
   if (topBarTool) {
     topBarTool.textContent = `Tool: ${toolLabels[tool]}`;
+  }
+  if (canvasViewport) {
+    const cursor = attackState?.awaitingTarget
+      ? "crosshair"
+      : tool === "pan"
+        ? "grab"
+        : tool === "draw"
+          ? "crosshair"
+          : tool === "token"
+            ? "pointer"
+            : "crosshair";
+    canvasViewport.style.cursor = cursor;
   }
   const toolbar = document.querySelector(".vtt-left-toolbar");
   if (toolbar) {
@@ -160,8 +559,9 @@ function setActiveTool(tool: Tool) {
 }
 
 function getGridMetrics() {
-  const cellSize = 48;
-  return { cellSize, step: cellSize };
+  const { pixelsPerGrid, gridOffsetX, gridOffsetY } = gameState.scene;
+  const cellSize = pixelsPerGrid;
+  return { cellSize, step: cellSize, offsetX: gridOffsetX, offsetY: gridOffsetY };
 }
 
 function getGridCoordinates(event: PointerEvent) {
@@ -169,11 +569,11 @@ function getGridCoordinates(event: PointerEvent) {
     return null;
   }
   const rect = canvasViewport.getBoundingClientRect();
-  const { step } = getGridMetrics();
+  const { step, offsetX, offsetY } = getGridMetrics();
   const localX = (event.clientX - rect.left - panOffset.x) / zoomLevel;
   const localY = (event.clientY - rect.top - panOffset.y) / zoomLevel;
-  const gridX = Math.floor(localX / step);
-  const gridY = Math.floor(localY / step);
+  const gridX = Math.floor((localX - offsetX) / step);
+  const gridY = Math.floor((localY - offsetY) / step);
   if (Number.isNaN(gridX) || Number.isNaN(gridY)) {
     return null;
   }
@@ -183,11 +583,41 @@ function getGridCoordinates(event: PointerEvent) {
   };
 }
 
+function getWorldCoordinates(event: PointerEvent) {
+  if (!canvasViewport) {
+    return null;
+  }
+  const rect = canvasViewport.getBoundingClientRect();
+  const localX = (event.clientX - rect.left - panOffset.x) / zoomLevel;
+  const localY = (event.clientY - rect.top - panOffset.y) / zoomLevel;
+  if (!Number.isFinite(localX) || !Number.isFinite(localY)) {
+    return null;
+  }
+  return { x: localX, y: localY };
+}
+
+function createPing(x: number, y: number) {
+  if (!canvasOverlay) {
+    return;
+  }
+  const ping = document.createElement("div");
+  ping.className = "vtt-ping";
+  ping.style.left = `${x}px`;
+  ping.style.top = `${y}px`;
+  canvasOverlay.appendChild(ping);
+  window.setTimeout(() => {
+    ping.remove();
+  }, 1000);
+}
+
 function renderGameGrid() {
   if (!gamePosition || !canvasWorld) {
     return;
   }
-  gamePosition.textContent = `Position: (${tokenPosition.x}, ${tokenPosition.y})`;
+  const activeToken = getTokenById(selectedTokenId) ?? getTokenById("player");
+  if (activeToken) {
+    gamePosition.textContent = `Position: (${activeToken.x}, ${activeToken.y})`;
+  }
   if (!canvasGridLayer || !canvasOverlay) {
     return;
   }
@@ -196,7 +626,7 @@ function renderGameGrid() {
     canvasTokenLayer.innerHTML = "";
   }
   canvasOverlay.innerHTML = "";
-  const { step } = getGridMetrics();
+  const { step, offsetX, offsetY } = getGridMetrics();
   const worldSize = gridSize * step;
   canvasWorld.style.width = `${worldSize}px`;
   canvasWorld.style.height = `${worldSize}px`;
@@ -206,24 +636,71 @@ function renderGameGrid() {
     "linear-gradient(to right, rgba(148, 163, 184, 0.9) 1px, transparent 1px)," +
     "linear-gradient(to bottom, rgba(148, 163, 184, 0.9) 1px, transparent 1px)";
   canvasGridLayer.style.backgroundSize = `${step}px ${step}px`;
-  canvasGridLayer.style.backgroundPosition = "0 0";
+  canvasGridLayer.style.backgroundPosition = `${offsetX}px ${offsetY}px`;
 
   if (canvasTokenLayer) {
-    const token = document.createElement("div");
-    token.className = "vtt-token";
-    const tokenSize = step * 0.7;
-    token.style.width = `${tokenSize}px`;
-    token.style.height = `${tokenSize}px`;
-    token.style.left = `${tokenPosition.x * step + step / 2}px`;
-    token.style.top = `${tokenPosition.y * step + step / 2}px`;
-    canvasTokenLayer.appendChild(token);
+    gameState.tokens.forEach((tokenData) => {
+      const token = document.createElement("div");
+      token.className = "vtt-token";
+      const isKo = tokenData.hp <= 0;
+      if (tokenData.id === selectedTokenId) {
+        token.classList.add("selected");
+      }
+      if (isKo) {
+        token.classList.add("ko");
+      }
+      if (attackState?.awaitingTarget && tokenData.id !== attackState.attackerId) {
+        const attacker = getTokenById(attackState.attackerId);
+        if (attacker) {
+          const distance = getDistanceBetweenTokens(attacker, tokenData);
+          token.classList.add("vtt-token-target");
+          if (distance > 1) {
+            token.classList.add("out-of-range");
+          }
+        }
+        if (tokenData.id === hoveredTokenId) {
+          token.classList.add("hovered");
+        }
+      }
+      token.dataset.tokenId = tokenData.id;
+      const tokenSize = step * tokenData.size * 0.7;
+      token.style.width = `${tokenSize}px`;
+      token.style.height = `${tokenSize}px`;
+      token.style.left = `${tokenData.x * step + offsetX + step / 2}px`;
+      token.style.top = `${tokenData.y * step + offsetY + step / 2}px`;
+      token.style.background = tokenData.color;
+
+      if (combatState.enabled) {
+        const label = document.createElement("div");
+        label.className = "vtt-token-label";
+        label.textContent = isKo ? "KO" : `${tokenData.name} ${tokenData.hp}/${tokenData.maxHp}`;
+
+        const hpBar = document.createElement("div");
+        hpBar.className = "vtt-token-hp";
+        const hpFill = document.createElement("span");
+        const ratio = tokenData.maxHp > 0 ? tokenData.hp / tokenData.maxHp : 0;
+        hpFill.style.width = `${Math.max(0, Math.min(1, ratio)) * 100}%`;
+        hpBar.appendChild(hpFill);
+        label.appendChild(hpBar);
+        token.appendChild(label);
+      }
+      if (combatState.started) {
+        const activeId = getActiveCombatTokenId();
+        if (activeId && tokenData.id === activeId) {
+          token.classList.add("active-turn");
+        } else if (activeId) {
+          token.classList.add("locked");
+        }
+      }
+      canvasTokenLayer.appendChild(token);
+    });
   }
 
   drawZones.forEach((zone) => {
     const rect = document.createElement("div");
     rect.style.position = "absolute";
-    rect.style.left = `${zone.x * step}px`;
-    rect.style.top = `${zone.y * step}px`;
+    rect.style.left = `${zone.x * step + offsetX}px`;
+    rect.style.top = `${zone.y * step + offsetY}px`;
     rect.style.width = `${zone.width * step - 4}px`;
     rect.style.height = `${zone.height * step - 4}px`;
     rect.style.background = "rgba(56, 189, 248, 0.15)";
@@ -239,8 +716,8 @@ function renderGameGrid() {
     const width = Math.abs(drawEnd.x - drawStart.x) + 1;
     const height = Math.abs(drawEnd.y - drawStart.y) + 1;
     rect.style.position = "absolute";
-    rect.style.left = `${minX * step}px`;
-    rect.style.top = `${minY * step}px`;
+    rect.style.left = `${minX * step + offsetX}px`;
+    rect.style.top = `${minY * step + offsetY}px`;
     rect.style.width = `${width * step - 4}px`;
     rect.style.height = `${height * step - 4}px`;
     rect.style.background = "rgba(148, 163, 184, 0.2)";
@@ -251,10 +728,10 @@ function renderGameGrid() {
 
   if (measureStart && measureEnd) {
     const line = document.createElement("div");
-    const startX = measureStart.x * step + step / 2;
-    const startY = measureStart.y * step + step / 2;
-    const endX = measureEnd.x * step + step / 2;
-    const endY = measureEnd.y * step + step / 2;
+    const startX = measureStart.x * step + offsetX + step / 2;
+    const startY = measureStart.y * step + offsetY + step / 2;
+    const endX = measureEnd.x * step + offsetX + step / 2;
+    const endY = measureEnd.y * step + offsetY + step / 2;
     const dx = endX - startX;
     const dy = endY - startY;
     const length = Math.hypot(dx, dy);
@@ -274,7 +751,7 @@ function renderGameGrid() {
       Math.abs(measureEnd.x - measureStart.x),
       Math.abs(measureEnd.y - measureStart.y)
     );
-    label.textContent = `${gridDistance} cases`;
+    label.textContent = `${gridDistance} cases (Chebyshev)`;
     label.style.position = "absolute";
     label.style.left = `${(startX + endX) / 2}px`;
     label.style.top = `${(startY + endY) / 2}px`;
@@ -286,16 +763,213 @@ function renderGameGrid() {
     label.style.color = "#f8fafc";
     canvasOverlay.appendChild(label);
   }
+
+  if (gridDebugEnabled) {
+    const crosshair = document.createElement("div");
+    crosshair.className = "vtt-grid-crosshair";
+    crosshair.style.left = `${offsetX}px`;
+    crosshair.style.top = `${offsetY}px`;
+    const vertical = document.createElement("span");
+    const horizontal = document.createElement("span");
+    crosshair.appendChild(vertical);
+    crosshair.appendChild(horizontal);
+    canvasOverlay.appendChild(crosshair);
+
+    const debugLabel = document.createElement("div");
+    debugLabel.className = "vtt-grid-debug";
+    debugLabel.textContent = `pixelsPerGrid: ${step} · offset: ${offsetX}, ${offsetY}`;
+    canvasOverlay.appendChild(debugLabel);
+  }
+}
+
+function renderScenesPanel() {
+  if (!tabContents) {
+    return;
+  }
+  const container = tabContents.Scenes;
+  container.innerHTML = "";
+
+  const list = document.createElement("div");
+  list.className = "vtt-scenes-panel";
+
+  scenes.forEach((scene) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "vtt-scene-button";
+    button.textContent = scene.name;
+    button.classList.toggle("active", scene.id === gameState.scene.id);
+    button.addEventListener("click", () => {
+      applyScene(scene);
+      renderScenesPanel();
+    });
+    list.appendChild(button);
+  });
+
+  const debugRow = document.createElement("label");
+  debugRow.className = "vtt-scene-debug";
+  const debugInput = document.createElement("input");
+  debugInput.type = "checkbox";
+  debugInput.checked = gridDebugEnabled;
+  debugInput.addEventListener("change", () => {
+    gridDebugEnabled = debugInput.checked;
+    renderGameGrid();
+  });
+  debugRow.appendChild(debugInput);
+  debugRow.appendChild(document.createTextNode(" Debug grille"));
+
+  const meta = document.createElement("div");
+  meta.className = "vtt-scene-meta";
+  meta.textContent = "Sélectionnez une scène pour changer la map.";
+
+  container.appendChild(list);
+  container.appendChild(meta);
+  container.appendChild(debugRow);
+}
+
+function renderActorsPanel(session: Session) {
+  if (!tabContents) {
+    return;
+  }
+  const container = tabContents.Actors;
+  container.innerHTML = "";
+
+  const header = document.createElement("div");
+  header.style.fontWeight = "600";
+  header.textContent = session.player.name;
+
+  const meta = document.createElement("div");
+  meta.style.color = "#94a3b8";
+  meta.style.fontSize = "12px";
+  const raceLabel = races.find((race) => race.id === session.player.raceId)?.name ?? session.player.raceId;
+  const classLabel = classes.find((entry) => entry.id === session.player.classId)?.name ?? session.player.classId;
+  meta.textContent = `${raceLabel} • ${classLabel}`;
+
+  const actions = document.createElement("div");
+  actions.className = "vtt-actors-actions";
+
+  const addNpcButton = document.createElement("button");
+  addNpcButton.type = "button";
+  addNpcButton.textContent = "Add NPC";
+  addNpcButton.addEventListener("click", () => {
+    addToken("npc");
+  });
+
+  const addMonsterButton = document.createElement("button");
+  addMonsterButton.type = "button";
+  addMonsterButton.textContent = "Add Monster";
+  addMonsterButton.addEventListener("click", () => {
+    addToken("monster");
+  });
+
+  actions.appendChild(addNpcButton);
+  actions.appendChild(addMonsterButton);
+
+  const combatActions = document.createElement("div");
+  combatActions.className = "vtt-actors-actions";
+
+  const attackButton = document.createElement("button");
+  attackButton.type = "button";
+  attackButton.textContent = attackState ? "Choose Target..." : "Attack";
+  attackButton.disabled = !combatState.enabled || !selectedTokenId || Boolean(attackState);
+  attackButton.addEventListener("click", () => {
+    if (selectedTokenId) {
+      if (combatState.enabled && combatState.started) {
+        const activeId = getActiveCombatTokenId();
+        if (activeId && selectedTokenId !== activeId) {
+          appendChatMessage("Ce n'est pas son tour.");
+          return;
+        }
+        if (combatState.actionState.hasActed) {
+          appendChatMessage("Action déjà utilisée.");
+          return;
+        }
+      }
+      setAttackState(selectedTokenId);
+      const attacker = getTokenById(selectedTokenId);
+      if (attacker) {
+        appendChatMessage(`${attacker.name} choisit une cible...`);
+      }
+    }
+  });
+
+  const healButton = document.createElement("button");
+  healButton.type = "button";
+  healButton.textContent = "Heal +1";
+  healButton.disabled = !selectedTokenId;
+  healButton.addEventListener("click", () => {
+    if (!selectedTokenId) {
+      return;
+    }
+    gameState = {
+      ...gameState,
+      tokens: gameState.tokens.map((token) => {
+        if (token.id !== selectedTokenId) {
+          return token;
+        }
+        const nextHp = Math.min(token.maxHp, token.hp + 1);
+        return { ...token, hp: nextHp };
+      })
+    };
+    renderGameGrid();
+    renderActorsPanel(session);
+  });
+
+  combatActions.appendChild(attackButton);
+  combatActions.appendChild(healButton);
+
+  const list = document.createElement("div");
+  list.className = "vtt-actors-list";
+  gameState.tokens.forEach((token) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "vtt-actors-token";
+    row.classList.toggle("active", token.id === selectedTokenId);
+    row.textContent = `${token.name} (${token.type}) • ${token.hp}/${token.maxHp}`;
+    row.addEventListener("click", () => {
+      selectToken(token.id);
+    });
+    list.appendChild(row);
+  });
+
+  if (combatState.enabled && combatState.started) {
+    const initiative = document.createElement("div");
+    initiative.className = "vtt-actors-initiative";
+    initiative.textContent = `Ordre d'initiative (Round ${combatState.round})`;
+    const orderList = document.createElement("div");
+    orderList.className = "vtt-actors-initiative-list";
+    combatState.initiativeOrder.forEach((id, index) => {
+      const token = getTokenById(id);
+      const item = document.createElement("div");
+      item.className = "vtt-actors-initiative-item";
+      item.textContent = token ? `${index + 1}. ${token.name}` : `${index + 1}. ${id}`;
+      if (id === getActiveCombatTokenId()) {
+        item.classList.add("active");
+      }
+      orderList.appendChild(item);
+    });
+    container.appendChild(initiative);
+    container.appendChild(orderList);
+  }
+
+  container.appendChild(header);
+  container.appendChild(meta);
+  const selectedToken = getTokenById(selectedTokenId);
+  if (selectedToken) {
+    const stats = document.createElement("div");
+    stats.className = "vtt-actors-stats";
+    stats.textContent = `AC ${selectedToken.ac} • Bonus +${selectedToken.attackBonus} • Dmg ${selectedToken.damage}`;
+    container.appendChild(stats);
+  }
+  container.appendChild(actions);
+  container.appendChild(combatActions);
+  container.appendChild(list);
 }
 
 function setGameView(session: Session) {
-  const raceLabel = races.find((race) => race.id === session.player.raceId)?.name ?? session.player.raceId;
-  const classLabel =
-    classes.find((entry) => entry.id === session.player.classId)?.name ?? session.player.classId;
   if (!gameView.hasChildNodes()) {
     const topBar = createTopBar();
     const leftToolbar = createLeftToolbar(activeTool, setActiveTool);
-    const canvasView = createCanvasView();
+    const canvasView = createCanvasView({ mapUrl: gameState.scene.mapUrl });
     const rightSidebar = createRightSidebar();
     const bottom = createBottomControls();
 
@@ -321,11 +995,15 @@ function setGameView(session: Session) {
     canvasViewport = canvasView.viewport;
     canvasGridLayer = canvasView.gridLayer;
     canvasTokenLayer = canvasView.tokenLayer;
+    canvasMapLayer = canvasView.mapLayer;
     rightSidebarRoot = rightSidebar.root;
     topBarRoom = topBar.room;
     topBarStatus = topBar.status;
     topBarTool = topBar.tool;
     toggleSidebarBtn = topBar.toggleSidebar;
+    combatToggleBtn = topBar.combatToggle;
+    vttEndTurnBtn = topBar.endTurn;
+    combatInfo = topBar.combatInfo;
     backToLobbyBtn = rightSidebar.backButton;
     tabButtons = rightSidebar.tabs;
     tabContents = rightSidebar.contents;
@@ -337,6 +1015,25 @@ function setGameView(session: Session) {
       }
       rightSidebarRoot.classList.toggle("vtt-sidebar-collapsed");
     });
+
+    if (combatToggleBtn) {
+      combatToggleBtn.addEventListener("click", () => {
+        combatState = { ...combatState, enabled: !combatState.enabled };
+        if (combatState.enabled) {
+          startCombat();
+        } else {
+          setAttackState(null);
+          resetCombat();
+        }
+        updateCombatToggle();
+      });
+      updateCombatToggle();
+    }
+    if (vttEndTurnBtn) {
+      vttEndTurnBtn.addEventListener("click", () => {
+        endTurn();
+      });
+    }
 
     setActiveTool(activeTool);
 
@@ -364,9 +1061,7 @@ function setGameView(session: Session) {
         updateCanvasTransform();
       });
       bottomControls.reset.addEventListener("click", () => {
-        zoomLevel = 1;
-        panOffset = { x: 0, y: 0 };
-        updateCanvasTransform();
+        resetCameraToScene(gameState.scene);
       });
       bottomControls.toggleGrid.addEventListener("click", () => {
         gridVisible = !gridVisible;
@@ -384,32 +1079,94 @@ function setGameView(session: Session) {
 
     if (canvasViewport) {
       const handlePointerDown = (event: PointerEvent) => {
+        if (attackState?.awaitingTarget && event.button === 0) {
+          const targetId = getTokenIdFromEvent(event);
+          if (targetId) {
+            handleAttackTarget(targetId);
+          }
+          return;
+        }
         const isPanMode = activeTool === "pan" || isSpacePressed || event.button === 1;
         if (isPanMode) {
           isPanning = true;
           panStart = { x: event.clientX - panOffset.x, y: event.clientY - panOffset.y };
+          canvasViewport.style.cursor = "grabbing";
           canvasViewport?.setPointerCapture(event.pointerId);
           return;
         }
         if (activeTool === "token" && event.button === 0) {
+          const clickedTokenId = getTokenIdFromEvent(event);
+          if (clickedTokenId) {
+            if (combatState.enabled && combatState.started) {
+              const activeId = getActiveCombatTokenId();
+              if (activeId && clickedTokenId !== activeId) {
+                appendChatMessage("Ce n'est pas son tour.");
+                return;
+              }
+            }
+            selectToken(clickedTokenId);
+            if (combatState.enabled && combatState.started && combatState.actionState.hasMoved) {
+              appendChatMessage("Déplacement déjà utilisé.");
+              return;
+            }
+            draggingTokenId = clickedTokenId;
+            canvasViewport?.setPointerCapture(event.pointerId);
+            return;
+          }
           const coords = getGridCoordinates(event);
           if (coords) {
-            tokenPosition = {
-              x: Math.max(0, Math.min(gridSize - 1, coords.x)),
-              y: Math.max(0, Math.min(gridSize - 1, coords.y))
-            };
-            renderGameGrid();
+            const targetToken = getTokenById(selectedTokenId) ?? getTokenById("player");
+            if (targetToken) {
+              if (combatState.enabled && combatState.started) {
+                const activeId = getActiveCombatTokenId();
+                if (activeId && targetToken.id !== activeId) {
+                  appendChatMessage("Ce n'est pas son tour.");
+                  return;
+                }
+                if (combatState.actionState.hasMoved) {
+                  appendChatMessage("Déplacement déjà utilisé.");
+                  return;
+                }
+              }
+              updateTokenPosition(targetToken.id, coords);
+              selectToken(targetToken.id);
+              renderGameGrid();
+            }
           }
           return;
         }
         if (activeTool === "measure") {
+          if (event.button === 2) {
+            clearMeasure();
+            return;
+          }
           const coords = getGridCoordinates(event);
           if (coords) {
-            isMeasuring = true;
+            if (!measureStart || !isMeasuring) {
+              isMeasuring = true;
+              measureLocked = false;
+              measureStart = coords;
+              measureEnd = coords;
+              renderGameGrid();
+              return;
+            }
+            if (!measureLocked) {
+              measureEnd = coords;
+              measureLocked = true;
+              renderGameGrid();
+              return;
+            }
             measureStart = coords;
             measureEnd = coords;
+            measureLocked = false;
             renderGameGrid();
-            canvasViewport?.setPointerCapture(event.pointerId);
+          }
+          return;
+        }
+        if (activeTool === "ping" && event.button === 0) {
+          const coords = getWorldCoordinates(event);
+          if (coords) {
+            createPing(coords.x, coords.y);
           }
           return;
         }
@@ -425,12 +1182,27 @@ function setGameView(session: Session) {
         }
       };
       const handlePointerMove = (event: PointerEvent) => {
+        if (attackState?.awaitingTarget) {
+          const tokenId = getTokenIdFromEvent(event);
+          if (tokenId !== hoveredTokenId) {
+            hoveredTokenId = tokenId;
+            renderGameGrid();
+          }
+        }
+        if (draggingTokenId && activeTool === "token") {
+          const coords = getGridCoordinates(event);
+          if (coords) {
+            updateTokenPosition(draggingTokenId, coords);
+            renderGameGrid();
+          }
+          return;
+        }
         if (isPanning) {
           panOffset = { x: event.clientX - panStart.x, y: event.clientY - panStart.y };
           updateCanvasTransform();
           return;
         }
-        if (isMeasuring && activeTool === "measure") {
+        if (isMeasuring && !measureLocked && activeTool === "measure") {
           const coords = getGridCoordinates(event);
           if (coords) {
             measureEnd = coords;
@@ -449,11 +1221,15 @@ function setGameView(session: Session) {
       const handlePointerUp = (event: PointerEvent) => {
         if (isPanning) {
           isPanning = false;
+          if (canvasViewport) {
+            const cursor = activeTool === "pan" ? "grab" : canvasViewport.style.cursor;
+            canvasViewport.style.cursor = cursor;
+          }
           canvasViewport?.releasePointerCapture(event.pointerId);
           return;
         }
-        if (isMeasuring) {
-          isMeasuring = false;
+        if (draggingTokenId) {
+          draggingTokenId = null;
           canvasViewport?.releasePointerCapture(event.pointerId);
           return;
         }
@@ -483,17 +1259,20 @@ function setGameView(session: Session) {
     topBarRoom.textContent = `Room ${session.id}`;
   }
   if (topBarStatus) {
-    topBarStatus.textContent = "Solo";
+    topBarStatus.textContent = `Solo · Scene: ${gameState.scene.name}`;
   }
-    if (tabContents) {
-      tabContents.Actors.innerHTML = `<strong>${session.player.name}</strong><div>${raceLabel} • ${classLabel}</div>`;
-      tabContents.Chat.innerHTML =
-        `<div class="vtt-chat-log">Aucun message pour l'instant.</div>` +
-        `<input class="vtt-chat-input" placeholder="Message..." />`;
-      tabContents.Items.textContent = "À venir";
-      tabContents.Journal.textContent = "À venir";
-      tabContents.Scenes.textContent = "À venir";
-    }
+  if (tabContents) {
+    tabContents.Chat.innerHTML =
+      `<div class="vtt-chat-log">Aucun message pour l'instant.</div>` +
+      `<input class="vtt-chat-input" placeholder="Message..." />`;
+    vttChatLog = tabContents.Chat.querySelector(".vtt-chat-log");
+    tabContents.Items.textContent = "À venir";
+    tabContents.Journal.textContent = "À venir";
+  }
+
+  renderScenesPanel();
+  renderActorsPanel(session);
+  updateCombatInfo();
 
   gameView.style.display = "flex";
   soloRoom.style.display = "none";
@@ -501,8 +1280,7 @@ function setGameView(session: Session) {
   hud.style.display = "none";
   chat.style.display = "none";
   combatPanel.style.display = "none";
-  updateCanvasTransform();
-  renderGameGrid();
+  applyScene(gameState.scene);
 }
 
 function navigateToGame(session: Session) {
@@ -589,10 +1367,9 @@ let spells: SpellData[] = [];
 let monsters: MonsterData[] = [];
 let lastPointer = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
 let activeSession: Session | null = null;
-const gridSize = 12;
-let tokenPosition = { x: 6, y: 6 };
-let zoomLevel = 1;
-let panOffset = { x: 0, y: 0 };
+let gridSize = gameState.scene.gridSize;
+let zoomLevel = gameState.scene.initialZoom;
+let panOffset = { x: gameState.scene.initialPanX, y: gameState.scene.initialPanY };
 let isPanning = false;
 let panStart = { x: 0, y: 0 };
 let canvasWorld: HTMLDivElement | null = null;
@@ -600,6 +1377,7 @@ let canvasViewport: HTMLDivElement | null = null;
 let canvasOverlay: HTMLDivElement | null = null;
 let canvasGridLayer: HTMLDivElement | null = null;
 let canvasTokenLayer: HTMLDivElement | null = null;
+let canvasMapLayer: HTMLDivElement | null = null;
 let gamePosition: HTMLDivElement | null = null;
 let rightSidebarRoot: HTMLDivElement | null = null;
 let topBarRoom: HTMLSpanElement | null = null;
@@ -626,6 +1404,26 @@ let isDrawing = false;
 let drawStart: { x: number; y: number } | null = null;
 let drawEnd: { x: number; y: number } | null = null;
 let drawZones: Array<{ x: number; y: number; width: number; height: number }> = [];
+let gridDebugEnabled = false;
+let selectedTokenId: string | null = "player";
+let draggingTokenId: string | null = null;
+let tokenIdCounter = 1;
+let attackState: { attackerId: string; awaitingTarget: boolean } | null = null;
+let hoveredTokenId: string | null = null;
+let measureLocked = false;
+let vttChatLog: HTMLDivElement | null = null;
+let combatToggleBtn: HTMLButtonElement | null = null;
+let vttEndTurnBtn: HTMLButtonElement | null = null;
+let combatInfo: HTMLSpanElement | null = null;
+let combatState = {
+  enabled: false,
+  started: false,
+  initiativeOrder: [] as string[],
+  activeIndex: 0,
+  round: 0,
+  actionState: { hasMoved: false, hasActed: false },
+  movementAllowance: 6
+};
 
 class GameScene extends Phaser.Scene {
   private tokenSprites = new Map<string, Phaser.GameObjects.Arc>();
@@ -840,6 +1638,12 @@ function appendChat(message: string) {
   line.textContent = message;
   chatLog.appendChild(line);
   chatLog.scrollTop = chatLog.scrollHeight;
+  if (vttChatLog) {
+    const vttLine = document.createElement("div");
+    vttLine.textContent = message;
+    vttChatLog.appendChild(vttLine);
+    vttChatLog.scrollTop = vttChatLog.scrollHeight;
+  }
 }
 
 function attachRoomListeners(activeRoom: Room<GameStateSchema>) {
@@ -1088,6 +1892,14 @@ window.addEventListener("popstate", () => {
 window.addEventListener("keydown", (event) => {
   if (event.code === "Space") {
     isSpacePressed = true;
+  }
+  if (event.key === "Escape") {
+    if (attackState) {
+      setAttackState(null);
+    }
+    if (activeTool === "measure") {
+      clearMeasure();
+    }
   }
 });
 
