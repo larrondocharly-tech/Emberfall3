@@ -114,12 +114,13 @@ function navigateToLobby() {
 }
 
 function syncRouteFromLocation() {
-  const match = window.location.pathname.match(/^\\/room\\/(.+)$/);
-  if (!match) {
+  const path = window.location.pathname;
+  const roomId = path.startsWith("/room/") ? path.slice("/room/".length) : null;
+  if (!roomId) {
     setSoloView(null);
     return;
   }
-  const existingSession = findSessionById(match[1]);
+  const existingSession = findSessionById(roomId);
   if (!existingSession) {
     roomInfo.textContent = "Room introuvable (solo local).";
     navigateToLobby();
