@@ -183,6 +183,33 @@ function getGridCoordinates(event: PointerEvent) {
   };
 }
 
+function getWorldCoordinates(event: PointerEvent) {
+  if (!canvasViewport) {
+    return null;
+  }
+  const rect = canvasViewport.getBoundingClientRect();
+  const localX = (event.clientX - rect.left - panOffset.x) / zoomLevel;
+  const localY = (event.clientY - rect.top - panOffset.y) / zoomLevel;
+  if (!Number.isFinite(localX) || !Number.isFinite(localY)) {
+    return null;
+  }
+  return { x: localX, y: localY };
+}
+
+function createPing(x: number, y: number) {
+  if (!canvasOverlay) {
+    return;
+  }
+  const ping = document.createElement("div");
+  ping.className = "vtt-ping";
+  ping.style.left = `${x}px`;
+  ping.style.top = `${y}px`;
+  canvasOverlay.appendChild(ping);
+  window.setTimeout(() => {
+    ping.remove();
+  }, 1000);
+}
+
 function renderGameGrid() {
   if (!gamePosition || !canvasWorld) {
     return;
@@ -410,6 +437,13 @@ function setGameView(session: Session) {
             measureEnd = coords;
             renderGameGrid();
             canvasViewport?.setPointerCapture(event.pointerId);
+          }
+          return;
+        }
+        if (activeTool === "ping" && event.button === 0) {
+          const coords = getWorldCoordinates(event);
+          if (coords) {
+            createPing(coords.x, coords.y);
           }
           return;
         }
