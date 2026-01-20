@@ -6,7 +6,7 @@ import { FEATURE_MULTIPLAYER } from "./config/features";
 import { createLocalAdapter } from "./adapters/localAdapter";
 import { createNetworkAdapter } from "./adapters/networkAdapter";
 import type { GameAdapter } from "./adapters/types";
-import type { PlayerProfile, Session } from "./game/state";
+import type { GameToken, PlayerProfile, Session, TokenType } from "./game/state";
 import { initialState } from "./game/state";
 import { applyAction } from "./game/reducer";
 import { findSessionById } from "./game/engine";
@@ -196,14 +196,25 @@ function resetCameraToScene(scene: Scene) {
 }
 
 function applyScene(scene: Scene, options: { resetCamera?: boolean; recenterToken?: boolean } = {}) {
-  const { resetCamera = true, recenterToken = true } = options;
+  const { resetCamera = true, recenterToken = false } = options;
   gameState = { ...gameState, scene };
   gridSize = scene.gridSize;
-  if (recenterToken) {
-    tokenPosition = {
-      x: Math.floor(scene.gridSize / 2),
-      y: Math.floor(scene.gridSize / 2)
+  const centerX = Math.floor(scene.gridSize / 2);
+  const centerY = Math.floor(scene.gridSize / 2);
+  gameState.tokens = gameState.tokens.map((token) => {
+    const next = {
+      ...token,
+      x: Math.max(0, Math.min(scene.gridSize - 1, token.x)),
+      y: Math.max(0, Math.min(scene.gridSize - 1, token.y))
     };
+    if (recenterToken && token.type === "player") {
+      next.x = centerX;
+      next.y = centerY;
+    }
+    return next;
+  });
+  if (!getTokenById(selectedTokenId)) {
+    selectedTokenId = gameState.tokens[0]?.id ?? null;
   }
   isMeasuring = false;
   measureStart = null;
@@ -222,6 +233,54 @@ function applyScene(scene: Scene, options: { resetCamera?: boolean; recenterToke
   renderGameGrid();
 }
 
+function selectToken(id: string | null) {
+  selectedTokenId = id;
+  renderGameGrid();
+  if (activeSession) {
+    renderActorsPanel(activeSession);
+  }
+}
+
+function updateTokenPosition(id: string, position: { x: number; y: number }) {
+  gameState = {
+    ...gameState,
+    tokens: gameState.tokens.map((token) =>
+      token.id === id ? { ...token, x: position.x, y: position.y } : token
+    )
+  };
+}
+
+function addToken(type: TokenType) {
+  const center = Math.floor(gridSize / 2);
+  const token: GameToken = {
+    id: `${type}-${tokenIdCounter++}`,
+    name: type === "monster" ? "Monstre" : "PNJ",
+    x: center,
+    y: center,
+    size: 1,
+    color: type === "monster" ? "#f87171" : "#22c55e",
+    type
+  };
+  gameState = { ...gameState, tokens: [...gameState.tokens, token] };
+  selectToken(token.id);
+}
+
+function getTokenById(id: string | null) {
+  if (!id) {
+    return null;
+  }
+  return gameState.tokens.find((token) => token.id === id) ?? null;
+}
+
+function getTokenIdFromEvent(event: PointerEvent) {
+  const target = event.target as HTMLElement | null;
+  if (!target) {
+    return null;
+  }
+  const tokenEl = target.closest<HTMLElement>(".vtt-token");
+  return tokenEl?.dataset.tokenId ?? null;
+}
+
 function setActiveTool(tool: Tool) {
   activeTool = tool;
   if (tool !== "measure") {
@@ -236,6 +295,17 @@ function setActiveTool(tool: Tool) {
   }
   if (topBarTool) {
     topBarTool.textContent = `Tool: ${toolLabels[tool]}`;
+  }
+  if (canvasViewport) {
+    const cursor =
+      tool === "pan"
+        ? "grab"
+        : tool === "draw"
+          ? "crosshair"
+          : tool === "token"
+            ? "pointer"
+            : "crosshair";
+    canvasViewport.style.cursor = cursor;
   }
   const toolbar = document.querySelector(".vtt-left-toolbar");
   if (toolbar) {
@@ -302,7 +372,10 @@ function renderGameGrid() {
   if (!gamePosition || !canvasWorld) {
     return;
   }
-  gamePosition.textContent = `Position: (${tokenPosition.x}, ${tokenPosition.y})`;
+  const activeToken = getTokenById(selectedTokenId) ?? getTokenById("player");
+  if (activeToken) {
+    gamePosition.textContent = `Position: (${activeToken.x}, ${activeToken.y})`;
+  }
   if (!canvasGridLayer || !canvasOverlay) {
     return;
   }
@@ -324,14 +397,21 @@ function renderGameGrid() {
   canvasGridLayer.style.backgroundPosition = `${offsetX}px ${offsetY}px`;
 
   if (canvasTokenLayer) {
-    const token = document.createElement("div");
-    token.className = "vtt-token";
-    const tokenSize = step * 0.7;
-    token.style.width = `${tokenSize}px`;
-    token.style.height = `${tokenSize}px`;
-    token.style.left = `${tokenPosition.x * step + offsetX + step / 2}px`;
-    token.style.top = `${tokenPosition.y * step + offsetY + step / 2}px`;
-    canvasTokenLayer.appendChild(token);
+    gameState.tokens.forEach((tokenData) => {
+      const token = document.createElement("div");
+      token.className = "vtt-token";
+      if (tokenData.id === selectedTokenId) {
+        token.classList.add("selected");
+      }
+      token.dataset.tokenId = tokenData.id;
+      const tokenSize = step * tokenData.size * 0.7;
+      token.style.width = `${tokenSize}px`;
+      token.style.height = `${tokenSize}px`;
+      token.style.left = `${tokenData.x * step + offsetX + step / 2}px`;
+      token.style.top = `${tokenData.y * step + offsetY + step / 2}px`;
+      token.style.background = tokenData.color;
+      canvasTokenLayer.appendChild(token);
+    });
   }
 
   drawZones.forEach((zone) => {
@@ -464,10 +544,65 @@ function renderScenesPanel() {
   container.appendChild(debugRow);
 }
 
-function setGameView(session: Session) {
+function renderActorsPanel(session: Session) {
+  if (!tabContents) {
+    return;
+  }
+  const container = tabContents.Actors;
+  container.innerHTML = "";
+
+  const header = document.createElement("div");
+  header.style.fontWeight = "600";
+  header.textContent = session.player.name;
+
+  const meta = document.createElement("div");
+  meta.style.color = "#94a3b8";
+  meta.style.fontSize = "12px";
   const raceLabel = races.find((race) => race.id === session.player.raceId)?.name ?? session.player.raceId;
-  const classLabel =
-    classes.find((entry) => entry.id === session.player.classId)?.name ?? session.player.classId;
+  const classLabel = classes.find((entry) => entry.id === session.player.classId)?.name ?? session.player.classId;
+  meta.textContent = `${raceLabel} • ${classLabel}`;
+
+  const actions = document.createElement("div");
+  actions.className = "vtt-actors-actions";
+
+  const addNpcButton = document.createElement("button");
+  addNpcButton.type = "button";
+  addNpcButton.textContent = "Add NPC";
+  addNpcButton.addEventListener("click", () => {
+    addToken("npc");
+  });
+
+  const addMonsterButton = document.createElement("button");
+  addMonsterButton.type = "button";
+  addMonsterButton.textContent = "Add Monster";
+  addMonsterButton.addEventListener("click", () => {
+    addToken("monster");
+  });
+
+  actions.appendChild(addNpcButton);
+  actions.appendChild(addMonsterButton);
+
+  const list = document.createElement("div");
+  list.className = "vtt-actors-list";
+  gameState.tokens.forEach((token) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "vtt-actors-token";
+    row.classList.toggle("active", token.id === selectedTokenId);
+    row.textContent = `${token.name} (${token.type})`;
+    row.addEventListener("click", () => {
+      selectToken(token.id);
+    });
+    list.appendChild(row);
+  });
+
+  container.appendChild(header);
+  container.appendChild(meta);
+  container.appendChild(actions);
+  container.appendChild(list);
+}
+
+function setGameView(session: Session) {
   if (!gameView.hasChildNodes()) {
     const topBar = createTopBar();
     const leftToolbar = createLeftToolbar(activeTool, setActiveTool);
@@ -563,17 +698,26 @@ function setGameView(session: Session) {
         if (isPanMode) {
           isPanning = true;
           panStart = { x: event.clientX - panOffset.x, y: event.clientY - panOffset.y };
+          canvasViewport.style.cursor = "grabbing";
           canvasViewport?.setPointerCapture(event.pointerId);
           return;
         }
         if (activeTool === "token" && event.button === 0) {
+          const clickedTokenId = getTokenIdFromEvent(event);
+          if (clickedTokenId) {
+            selectToken(clickedTokenId);
+            draggingTokenId = clickedTokenId;
+            canvasViewport?.setPointerCapture(event.pointerId);
+            return;
+          }
           const coords = getGridCoordinates(event);
           if (coords) {
-            tokenPosition = {
-              x: Math.max(0, Math.min(gridSize - 1, coords.x)),
-              y: Math.max(0, Math.min(gridSize - 1, coords.y))
-            };
-            renderGameGrid();
+            const targetToken = getTokenById(selectedTokenId) ?? getTokenById("player");
+            if (targetToken) {
+              updateTokenPosition(targetToken.id, coords);
+              selectToken(targetToken.id);
+              renderGameGrid();
+            }
           }
           return;
         }
@@ -607,6 +751,14 @@ function setGameView(session: Session) {
         }
       };
       const handlePointerMove = (event: PointerEvent) => {
+        if (draggingTokenId && activeTool === "token") {
+          const coords = getGridCoordinates(event);
+          if (coords) {
+            updateTokenPosition(draggingTokenId, coords);
+            renderGameGrid();
+          }
+          return;
+        }
         if (isPanning) {
           panOffset = { x: event.clientX - panStart.x, y: event.clientY - panStart.y };
           updateCanvasTransform();
@@ -631,6 +783,15 @@ function setGameView(session: Session) {
       const handlePointerUp = (event: PointerEvent) => {
         if (isPanning) {
           isPanning = false;
+          if (canvasViewport) {
+            const cursor = activeTool === "pan" ? "grab" : canvasViewport.style.cursor;
+            canvasViewport.style.cursor = cursor;
+          }
+          canvasViewport?.releasePointerCapture(event.pointerId);
+          return;
+        }
+        if (draggingTokenId) {
+          draggingTokenId = null;
           canvasViewport?.releasePointerCapture(event.pointerId);
           return;
         }
@@ -668,7 +829,6 @@ function setGameView(session: Session) {
     topBarStatus.textContent = `Solo · Scene: ${gameState.scene.name}`;
   }
   if (tabContents) {
-    tabContents.Actors.innerHTML = `<strong>${session.player.name}</strong><div>${raceLabel} • ${classLabel}</div>`;
     tabContents.Chat.innerHTML =
       `<div class="vtt-chat-log">Aucun message pour l'instant.</div>` +
       `<input class="vtt-chat-input" placeholder="Message..." />`;
@@ -677,6 +837,7 @@ function setGameView(session: Session) {
   }
 
   renderScenesPanel();
+  renderActorsPanel(session);
 
   gameView.style.display = "flex";
   soloRoom.style.display = "none";
@@ -772,7 +933,6 @@ let monsters: MonsterData[] = [];
 let lastPointer = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
 let activeSession: Session | null = null;
 let gridSize = gameState.scene.gridSize;
-let tokenPosition = { x: Math.floor(gridSize / 2), y: Math.floor(gridSize / 2) };
 let zoomLevel = gameState.scene.initialZoom;
 let panOffset = { x: gameState.scene.initialPanX, y: gameState.scene.initialPanY };
 let isPanning = false;
@@ -810,6 +970,9 @@ let drawStart: { x: number; y: number } | null = null;
 let drawEnd: { x: number; y: number } | null = null;
 let drawZones: Array<{ x: number; y: number; width: number; height: number }> = [];
 let gridDebugEnabled = false;
+let selectedTokenId: string | null = "player";
+let draggingTokenId: string | null = null;
+let tokenIdCounter = 1;
 
 class GameScene extends Phaser.Scene {
   private tokenSprites = new Map<string, Phaser.GameObjects.Arc>();

@@ -14,18 +14,36 @@ export type Session = {
   code: string;
 };
 
-export type Scene = {
+export type TokenType = "player" | "npc" | "monster";
+
+export type GameToken = {
   id: string;
   name: string;
-  mapUrl: string;
+  x: number;
+  y: number;
+  size: number;
+  color: string;
+  type: TokenType;
 };
 
 export type GameState = {
   session: Session | null;
   scene: Scene;
+  tokens: GameToken[];
 };
 
 export const initialState: GameState = {
   session: null,
-  scene: getSceneById(defaultSceneId)
+  scene: getSceneById(defaultSceneId),
+  tokens: [
+    {
+      id: "player",
+      name: "Héros",
+      x: 6,
+      y: 6,
+      size: 1,
+      color: "#38bdf8",
+      type: "player"
+    }
+  ]
 };
