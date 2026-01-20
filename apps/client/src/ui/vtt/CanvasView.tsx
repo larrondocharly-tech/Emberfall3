@@ -4,6 +4,7 @@ export type CanvasViewElements = {
   grid: HTMLDivElement;
   viewport: HTMLDivElement;
   inner: HTMLDivElement;
+  overlay: HTMLDivElement;
 };
 
 export function createCanvasView(): CanvasViewElements {
@@ -23,17 +24,24 @@ export function createCanvasView(): CanvasViewElements {
 
   const inner = document.createElement("div");
   inner.className = "vtt-canvas-inner";
+  inner.style.position = "relative";
 
   const grid = document.createElement("div");
   grid.style.display = "grid";
   grid.style.gridTemplateColumns = "repeat(12, 24px)";
   grid.style.gap = "4px";
 
+  const overlay = document.createElement("div");
+  overlay.style.position = "absolute";
+  overlay.style.inset = "0";
+  overlay.style.pointerEvents = "none";
+
   inner.appendChild(grid);
+  inner.appendChild(overlay);
   viewport.appendChild(inner);
 
   root.appendChild(viewport);
   root.appendChild(header);
 
-  return { root, position, grid, viewport, inner };
+  return { root, position, grid, viewport, inner, overlay };
 }

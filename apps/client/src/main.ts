@@ -10,6 +10,8 @@ import type { PlayerProfile, Session } from "./game/state";
 import { initialState } from "./game/state";
 import { applyAction } from "./game/reducer";
 import { findSessionById } from "./game/engine";
+import { defaultTool, toolLabels } from "./game/tools";
+import type { Tool } from "./game/tools";
 import { createTopBar } from "./ui/vtt/TopBar";
 import { createLeftToolbar } from "./ui/vtt/LeftToolbar";
 import type { SidebarTab } from "./ui/vtt/RightSidebar";
@@ -133,16 +135,68 @@ function clampZoom(value: number) {
   return Math.min(2, Math.max(0.6, value));
 }
 
+function setActiveTool(tool: Tool) {
+  activeTool = tool;
+  if (tool !== "measure") {
+    isMeasuring = false;
+    measureStart = null;
+    measureEnd = null;
+  }
+  if (tool !== "draw") {
+    isDrawing = false;
+    drawStart = null;
+    drawEnd = null;
+  }
+  if (topBarTool) {
+    topBarTool.textContent = `Tool: ${toolLabels[tool]}`;
+  }
+  const toolbar = document.querySelector(".vtt-left-toolbar");
+  if (toolbar) {
+    toolbar.querySelectorAll("button").forEach((button) => {
+      button.classList.toggle("active", button.getAttribute("data-tool") === tool);
+    });
+  }
+  renderGameGrid();
+}
+
+function getGridMetrics() {
+  const cellSize = 24;
+  const gap = 4;
+  const step = cellSize + gap;
+  return { cellSize, gap, step };
+}
+
+function getGridCoordinates(event: PointerEvent) {
+  if (!canvasViewport) {
+    return null;
+  }
+  const rect = canvasViewport.getBoundingClientRect();
+  const { step } = getGridMetrics();
+  const localX = (event.clientX - rect.left - panOffset.x) / zoomLevel;
+  const localY = (event.clientY - rect.top - panOffset.y) / zoomLevel;
+  const gridX = Math.floor(localX / step);
+  const gridY = Math.floor(localY / step);
+  if (Number.isNaN(gridX) || Number.isNaN(gridY)) {
+    return null;
+  }
+  return {
+    x: Math.max(0, Math.min(gridSize - 1, gridX)),
+    y: Math.max(0, Math.min(gridSize - 1, gridY))
+  };
+}
+
 function renderGameGrid() {
   if (!gamePosition || !canvasInner) {
     return;
   }
   gamePosition.textContent = `Position: (${tokenPosition.x}, ${tokenPosition.y})`;
   const gameGrid = canvasInner.querySelector("[data-grid]") as HTMLDivElement | null;
-  if (!gameGrid) {
+  if (!gameGrid || !canvasOverlay) {
     return;
   }
   gameGrid.innerHTML = "";
+  canvasOverlay.innerHTML = "";
+  const { step } = getGridMetrics();
   for (let y = 0; y < gridSize; y += 1) {
     for (let x = 0; x < gridSize; x += 1) {
       const cell = document.createElement("div");
@@ -173,14 +227,84 @@ function renderGameGrid() {
         cell.style.boxShadow = "";
       });
       cell.addEventListener("click", () => {
-        tokenPosition = {
-          x: Math.max(0, Math.min(gridSize - 1, x)),
-          y: Math.max(0, Math.min(gridSize - 1, y))
-        };
-        renderGameGrid();
+        if (activeTool === "token") {
+          tokenPosition = {
+            x: Math.max(0, Math.min(gridSize - 1, x)),
+            y: Math.max(0, Math.min(gridSize - 1, y))
+          };
+          renderGameGrid();
+        }
       });
       gameGrid.appendChild(cell);
     }
+  }
+
+  drawZones.forEach((zone) => {
+    const rect = document.createElement("div");
+    rect.style.position = "absolute";
+    rect.style.left = `${zone.x * step}px`;
+    rect.style.top = `${zone.y * step}px`;
+    rect.style.width = `${zone.width * step - 4}px`;
+    rect.style.height = `${zone.height * step - 4}px`;
+    rect.style.background = "rgba(56, 189, 248, 0.15)";
+    rect.style.border = "1px solid rgba(56, 189, 248, 0.6)";
+    rect.style.borderRadius = "4px";
+    canvasOverlay.appendChild(rect);
+  });
+
+  if (isDrawing && drawStart && drawEnd) {
+    const rect = document.createElement("div");
+    const minX = Math.min(drawStart.x, drawEnd.x);
+    const minY = Math.min(drawStart.y, drawEnd.y);
+    const width = Math.abs(drawEnd.x - drawStart.x) + 1;
+    const height = Math.abs(drawEnd.y - drawStart.y) + 1;
+    rect.style.position = "absolute";
+    rect.style.left = `${minX * step}px`;
+    rect.style.top = `${minY * step}px`;
+    rect.style.width = `${width * step - 4}px`;
+    rect.style.height = `${height * step - 4}px`;
+    rect.style.background = "rgba(148, 163, 184, 0.2)";
+    rect.style.border = "1px dashed rgba(148, 163, 184, 0.8)";
+    rect.style.borderRadius = "4px";
+    canvasOverlay.appendChild(rect);
+  }
+
+  if (measureStart && measureEnd) {
+    const line = document.createElement("div");
+    const startX = measureStart.x * step + step / 2;
+    const startY = measureStart.y * step + step / 2;
+    const endX = measureEnd.x * step + step / 2;
+    const endY = measureEnd.y * step + step / 2;
+    const dx = endX - startX;
+    const dy = endY - startY;
+    const length = Math.hypot(dx, dy);
+    const angle = Math.atan2(dy, dx);
+    line.style.position = "absolute";
+    line.style.left = `${startX}px`;
+    line.style.top = `${startY}px`;
+    line.style.width = `${length}px`;
+    line.style.height = "2px";
+    line.style.background = "rgba(248, 113, 113, 0.9)";
+    line.style.transformOrigin = "0 0";
+    line.style.transform = `rotate(${angle}rad)`;
+    canvasOverlay.appendChild(line);
+
+    const label = document.createElement("div");
+    const gridDistance = Math.max(
+      Math.abs(measureEnd.x - measureStart.x),
+      Math.abs(measureEnd.y - measureStart.y)
+    );
+    label.textContent = `${gridDistance} cases`;
+    label.style.position = "absolute";
+    label.style.left = `${(startX + endX) / 2}px`;
+    label.style.top = `${(startY + endY) / 2}px`;
+    label.style.transform = "translate(-50%, -50%)";
+    label.style.background = "rgba(15, 23, 42, 0.8)";
+    label.style.padding = "2px 6px";
+    label.style.borderRadius = "6px";
+    label.style.fontSize = "12px";
+    label.style.color = "#f8fafc";
+    canvasOverlay.appendChild(label);
   }
 }
 
@@ -190,7 +314,7 @@ function setGameView(session: Session) {
     classes.find((entry) => entry.id === session.player.classId)?.name ?? session.player.classId;
   if (!gameView.hasChildNodes()) {
     const topBar = createTopBar();
-    const leftToolbar = createLeftToolbar();
+    const leftToolbar = createLeftToolbar(activeTool, setActiveTool);
     const canvasView = createCanvasView();
     const rightSidebar = createRightSidebar();
     const bottom = createBottomControls();
@@ -213,10 +337,12 @@ function setGameView(session: Session) {
 
     gamePosition = canvasView.position;
     canvasInner = canvasView.inner;
+    canvasOverlay = canvasView.overlay;
     canvasViewport = canvasView.viewport;
     rightSidebarRoot = rightSidebar.root;
     topBarRoom = topBar.room;
     topBarStatus = topBar.status;
+    topBarTool = topBar.tool;
     toggleSidebarBtn = topBar.toggleSidebar;
     backToLobbyBtn = rightSidebar.backButton;
     tabButtons = rightSidebar.tabs;
@@ -232,6 +358,8 @@ function setGameView(session: Session) {
       }
       rightSidebarRoot.classList.toggle("vtt-sidebar-collapsed");
     });
+
+    setActiveTool(activeTool);
 
     const tabs = tabButtons;
     const contents = tabContents;
@@ -277,25 +405,82 @@ function setGameView(session: Session) {
 
     if (canvasViewport) {
       const handlePointerDown = (event: PointerEvent) => {
-        if (event.button === 1 || event.shiftKey) {
+        const isPanMode = activeTool === "pan" || isSpacePressed || event.button === 1;
+        if (isPanMode) {
           isPanning = true;
           panStart = { x: event.clientX - panOffset.x, y: event.clientY - panOffset.y };
           canvasViewport?.setPointerCapture(event.pointerId);
+          return;
+        }
+        if (activeTool === "measure") {
+          const coords = getGridCoordinates(event);
+          if (coords) {
+            isMeasuring = true;
+            measureStart = coords;
+            measureEnd = coords;
+            renderGameGrid();
+            canvasViewport?.setPointerCapture(event.pointerId);
+          }
+          return;
+        }
+        if (activeTool === "draw") {
+          const coords = getGridCoordinates(event);
+          if (coords) {
+            isDrawing = true;
+            drawStart = coords;
+            drawEnd = coords;
+            renderGameGrid();
+            canvasViewport?.setPointerCapture(event.pointerId);
+          }
         }
       };
       const handlePointerMove = (event: PointerEvent) => {
-        if (!isPanning) {
+        if (isPanning) {
+          panOffset = { x: event.clientX - panStart.x, y: event.clientY - panStart.y };
+          updateCanvasTransform();
           return;
         }
-        panOffset = { x: event.clientX - panStart.x, y: event.clientY - panStart.y };
-        updateCanvasTransform();
+        if (isMeasuring && activeTool === "measure") {
+          const coords = getGridCoordinates(event);
+          if (coords) {
+            measureEnd = coords;
+            renderGameGrid();
+          }
+          return;
+        }
+        if (isDrawing && activeTool === "draw") {
+          const coords = getGridCoordinates(event);
+          if (coords) {
+            drawEnd = coords;
+            renderGameGrid();
+          }
+        }
       };
       const handlePointerUp = (event: PointerEvent) => {
-        if (!isPanning) {
+        if (isPanning) {
+          isPanning = false;
+          canvasViewport?.releasePointerCapture(event.pointerId);
           return;
         }
-        isPanning = false;
-        canvasViewport?.releasePointerCapture(event.pointerId);
+        if (isMeasuring) {
+          isMeasuring = false;
+          canvasViewport?.releasePointerCapture(event.pointerId);
+          return;
+        }
+        if (isDrawing) {
+          isDrawing = false;
+          if (drawStart && drawEnd) {
+            const minX = Math.min(drawStart.x, drawEnd.x);
+            const minY = Math.min(drawStart.y, drawEnd.y);
+            const width = Math.abs(drawEnd.x - drawStart.x) + 1;
+            const height = Math.abs(drawEnd.y - drawStart.y) + 1;
+            drawZones = [...drawZones, { x: minX, y: minY, width, height }];
+          }
+          drawStart = null;
+          drawEnd = null;
+          renderGameGrid();
+          canvasViewport?.releasePointerCapture(event.pointerId);
+        }
       };
       canvasViewport.addEventListener("pointerdown", handlePointerDown);
       canvasViewport.addEventListener("pointermove", handlePointerMove);
@@ -422,10 +607,12 @@ let isPanning = false;
 let panStart = { x: 0, y: 0 };
 let canvasInner: HTMLDivElement | null = null;
 let canvasViewport: HTMLDivElement | null = null;
+let canvasOverlay: HTMLDivElement | null = null;
 let gamePosition: HTMLDivElement | null = null;
 let rightSidebarRoot: HTMLDivElement | null = null;
 let topBarRoom: HTMLSpanElement | null = null;
 let topBarStatus: HTMLSpanElement | null = null;
+let topBarTool: HTMLSpanElement | null = null;
 let toggleSidebarBtn: HTMLButtonElement | null = null;
 let backToLobbyBtn: HTMLButtonElement | null = null;
 let tabButtons: Record<SidebarTab, HTMLButtonElement> | null = null;
@@ -438,6 +625,15 @@ let bottomControls:
       toggleGrid: HTMLButtonElement;
     }
   | null = null;
+let activeTool: Tool = defaultTool;
+let isSpacePressed = false;
+let isMeasuring = false;
+let measureStart: { x: number; y: number } | null = null;
+let measureEnd: { x: number; y: number } | null = null;
+let isDrawing = false;
+let drawStart: { x: number; y: number } | null = null;
+let drawEnd: { x: number; y: number } | null = null;
+let drawZones: Array<{ x: number; y: number; width: number; height: number }> = [];
 
 class GameScene extends Phaser.Scene {
   private tokenSprites = new Map<string, Phaser.GameObjects.Arc>();
@@ -895,6 +1091,18 @@ loadData()
 
 window.addEventListener("popstate", () => {
   syncRouteFromLocation();
+});
+
+window.addEventListener("keydown", (event) => {
+  if (event.code === "Space") {
+    isSpacePressed = true;
+  }
+});
+
+window.addEventListener("keyup", (event) => {
+  if (event.code === "Space") {
+    isSpacePressed = false;
+  }
 });
 
 void game;
