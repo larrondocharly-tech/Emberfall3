@@ -161,8 +161,17 @@
         <div id="soloSessionCode"></div>
         <div id="soloPlayerName"></div>
         <div id="soloPlayerClass"></div>
+        <button id="enterGame">Entrer dans la partie</button>
         <button id="copyRoomCode">Copier le code</button>
         <button id="leaveRoom" class="secondary">Quitter</button>
+      </div>
+    </div>
+    <div class="overlay" id="gameView" style="display: none;">
+      <div class="panel" style="width: 520px;">
+        <strong id="gameTitle"></strong>
+        <div id="gamePlayer"></div>
+        <div id="gameGrid" style="display: grid; grid-template-columns: repeat(12, 24px); gap: 4px;"></div>
+        <button id="backToLobby" class="secondary">Retour au lobby</button>
       </div>
     </div>
 

@@ -91,12 +91,14 @@ function setSoloView(session: Session | null) {
       classes.find((entry) => entry.id === session.player.classId)?.name ?? session.player.classId;
     soloPlayerClass.textContent = `Race/Classe: ${raceLabel} · ${classLabel}`;
     soloRoom.style.display = "flex";
+    gameView.style.display = "none";
     lobby.style.display = "none";
     hud.style.display = "none";
     chat.style.display = "none";
     combatPanel.style.display = "none";
   } else {
     soloRoom.style.display = "none";
+    gameView.style.display = "none";
     lobby.style.display = "flex";
     hud.style.display = "flex";
     chat.style.display = "flex";
@@ -114,8 +116,71 @@ function navigateToLobby() {
   setSoloView(null);
 }
 
+function renderGameGrid() {
+  gameGrid.innerHTML = "";
+  for (let y = 0; y < gridSize; y += 1) {
+    for (let x = 0; x < gridSize; x += 1) {
+      const cell = document.createElement("div");
+      cell.style.width = "24px";
+      cell.style.height = "24px";
+      cell.style.background = "#1e293b";
+      cell.style.border = "1px solid #334155";
+      cell.style.display = "flex";
+      cell.style.alignItems = "center";
+      cell.style.justifyContent = "center";
+      cell.style.cursor = "pointer";
+      if (x === tokenPosition.x && y === tokenPosition.y) {
+        const token = document.createElement("div");
+        token.style.width = "12px";
+        token.style.height = "12px";
+        token.style.borderRadius = "999px";
+        token.style.background = "#38bdf8";
+        cell.appendChild(token);
+      }
+      cell.addEventListener("click", () => {
+        tokenPosition = { x, y };
+        renderGameGrid();
+      });
+      gameGrid.appendChild(cell);
+    }
+  }
+}
+
+function setGameView(session: Session) {
+  const raceLabel = races.find((race) => race.id === session.player.raceId)?.name ?? session.player.raceId;
+  const classLabel =
+    classes.find((entry) => entry.id === session.player.classId)?.name ?? session.player.classId;
+  gameTitle.textContent = `Jeu — Room ${session.id}`;
+  gamePlayer.textContent = `Pseudo: ${session.player.name} • Race: ${raceLabel} • Classe: ${classLabel}`;
+  gameView.style.display = "flex";
+  soloRoom.style.display = "none";
+  lobby.style.display = "none";
+  hud.style.display = "none";
+  chat.style.display = "none";
+  combatPanel.style.display = "none";
+  renderGameGrid();
+}
+
+function navigateToGame(session: Session) {
+  window.history.pushState({}, "", `/game/${session.id}`);
+  setGameView(session);
+}
+
 function syncRouteFromLocation() {
   const path = window.location.pathname;
+  const gameId = path.startsWith("/game/") ? path.slice("/game/".length) : null;
+  if (gameId) {
+    const existingSession = findSessionById(gameId);
+    if (!existingSession) {
+      roomInfo.textContent = "Room introuvable (solo local).";
+      navigateToLobby();
+      return;
+    }
+    activeSession = existingSession;
+    dispatch({ type: "SESSION_JOINED", session: existingSession });
+    setGameView(existingSession);
+    return;
+  }
   const roomId = path.startsWith("/room/") ? path.slice("/room/".length) : null;
   if (!roomId) {
     setSoloView(null);
@@ -143,6 +208,12 @@ const soloSessionId = document.getElementById("soloSessionId") as HTMLDivElement
 const soloSessionCode = document.getElementById("soloSessionCode") as HTMLDivElement;
 const soloPlayerName = document.getElementById("soloPlayerName") as HTMLDivElement;
 const soloPlayerClass = document.getElementById("soloPlayerClass") as HTMLDivElement;
+const enterGameBtn = document.getElementById("enterGame") as HTMLButtonElement;
+const gameView = document.getElementById("gameView") as HTMLDivElement;
+const gameTitle = document.getElementById("gameTitle") as HTMLDivElement;
+const gamePlayer = document.getElementById("gamePlayer") as HTMLDivElement;
+const gameGrid = document.getElementById("gameGrid") as HTMLDivElement;
+const backToLobbyBtn = document.getElementById("backToLobby") as HTMLButtonElement;
 const copyRoomCodeBtn = document.getElementById("copyRoomCode") as HTMLButtonElement;
 const leaveRoomBtn = document.getElementById("leaveRoom") as HTMLButtonElement;
 const statusText = document.getElementById("status") as HTMLDivElement;
@@ -178,6 +249,8 @@ let spells: SpellData[] = [];
 let monsters: MonsterData[] = [];
 let lastPointer = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
 let activeSession: Session | null = null;
+const gridSize = 12;
+let tokenPosition = { x: 6, y: 6 };
 
 class GameScene extends Phaser.Scene {
   private tokenSprites = new Map<string, Phaser.GameObjects.Arc>();
@@ -546,6 +619,13 @@ joinRoomBtn.addEventListener("click", () => {
   void joinRoom();
 });
 
+enterGameBtn.addEventListener("click", () => {
+  if (!activeSession) {
+    return;
+  }
+  navigateToGame(activeSession);
+});
+
 leaveRoomBtn.addEventListener("click", () => {
   activeSession = null;
   dispatch({ type: "SESSION_LEFT" });
@@ -563,6 +643,12 @@ copyRoomCodeBtn.addEventListener("click", async () => {
     console.error("Failed to copy room code:", error);
     roomInfo.textContent = "Impossible de copier le code.";
   }
+});
+
+backToLobbyBtn.addEventListener("click", () => {
+  activeSession = null;
+  dispatch({ type: "SESSION_LEFT" });
+  navigateToLobby();
 });
 
 spawnMonsterBtn.addEventListener("click", () => {
