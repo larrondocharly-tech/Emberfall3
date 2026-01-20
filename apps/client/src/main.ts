@@ -125,10 +125,10 @@ function navigateToLobby() {
 }
 
 function updateCanvasTransform() {
-  if (!canvasInner) {
+  if (!canvasWorld) {
     return;
   }
-  canvasInner.style.transform = `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomLevel})`;
+  canvasWorld.style.transform = `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomLevel})`;
 }
 
 function clampZoom(value: number) {
@@ -160,10 +160,8 @@ function setActiveTool(tool: Tool) {
 }
 
 function getGridMetrics() {
-  const cellSize = 24;
-  const gap = 4;
-  const step = cellSize + gap;
-  return { cellSize, gap, step };
+  const cellSize = 48;
+  return { cellSize, step: cellSize };
 }
 
 function getGridCoordinates(event: PointerEvent) {
@@ -186,57 +184,39 @@ function getGridCoordinates(event: PointerEvent) {
 }
 
 function renderGameGrid() {
-  if (!gamePosition || !canvasInner) {
+  if (!gamePosition || !canvasWorld) {
     return;
   }
   gamePosition.textContent = `Position: (${tokenPosition.x}, ${tokenPosition.y})`;
-  const gameGrid = canvasInner.querySelector("[data-grid]") as HTMLDivElement | null;
-  if (!gameGrid || !canvasOverlay) {
+  if (!canvasGridLayer || !canvasOverlay) {
     return;
   }
-  gameGrid.innerHTML = "";
+  canvasGridLayer.innerHTML = "";
+  if (canvasTokenLayer) {
+    canvasTokenLayer.innerHTML = "";
+  }
   canvasOverlay.innerHTML = "";
   const { step } = getGridMetrics();
-  for (let y = 0; y < gridSize; y += 1) {
-    for (let x = 0; x < gridSize; x += 1) {
-      const cell = document.createElement("div");
-      cell.style.width = "24px";
-      cell.style.height = "24px";
-      cell.style.background = "#1e293b";
-      cell.style.border = gridVisible ? "1px solid #334155" : "1px solid transparent";
-      cell.style.transition = "border-color 120ms ease, box-shadow 120ms ease";
-      cell.style.display = "flex";
-      cell.style.alignItems = "center";
-      cell.style.justifyContent = "center";
-      cell.style.cursor = "pointer";
-      if (x === tokenPosition.x && y === tokenPosition.y) {
-        const token = document.createElement("div");
-        token.style.width = "12px";
-        token.style.height = "12px";
-        token.style.borderRadius = "999px";
-        token.style.background = "#38bdf8";
-        token.style.transition = "transform 120ms ease";
-        cell.appendChild(token);
-      }
-      cell.addEventListener("mouseenter", () => {
-        cell.style.borderColor = "#94a3b8";
-        cell.style.boxShadow = "0 0 0 2px rgba(148, 163, 184, 0.4)";
-      });
-      cell.addEventListener("mouseleave", () => {
-        cell.style.borderColor = gridVisible ? "#334155" : "transparent";
-        cell.style.boxShadow = "";
-      });
-      cell.addEventListener("click", () => {
-        if (activeTool === "token") {
-          tokenPosition = {
-            x: Math.max(0, Math.min(gridSize - 1, x)),
-            y: Math.max(0, Math.min(gridSize - 1, y))
-          };
-          renderGameGrid();
-        }
-      });
-      gameGrid.appendChild(cell);
-    }
+  const worldSize = gridSize * step;
+  canvasWorld.style.width = `${worldSize}px`;
+  canvasWorld.style.height = `${worldSize}px`;
+
+  canvasGridLayer.style.display = gridVisible ? "block" : "none";
+  canvasGridLayer.style.backgroundImage =
+    "linear-gradient(to right, rgba(148, 163, 184, 0.9) 1px, transparent 1px)," +
+    "linear-gradient(to bottom, rgba(148, 163, 184, 0.9) 1px, transparent 1px)";
+  canvasGridLayer.style.backgroundSize = `${step}px ${step}px`;
+  canvasGridLayer.style.backgroundPosition = "0 0";
+
+  if (canvasTokenLayer) {
+    const token = document.createElement("div");
+    token.className = "vtt-token";
+    const tokenSize = step * 0.7;
+    token.style.width = `${tokenSize}px`;
+    token.style.height = `${tokenSize}px`;
+    token.style.left = `${tokenPosition.x * step + step / 2}px`;
+    token.style.top = `${tokenPosition.y * step + step / 2}px`;
+    canvasTokenLayer.appendChild(token);
   }
 
   drawZones.forEach((zone) => {
@@ -336,9 +316,11 @@ function setGameView(session: Session) {
     gameView.appendChild(body);
 
     gamePosition = canvasView.position;
-    canvasInner = canvasView.inner;
-    canvasOverlay = canvasView.overlay;
+    canvasWorld = canvasView.world;
+    canvasOverlay = canvasView.overlayLayer;
     canvasViewport = canvasView.viewport;
+    canvasGridLayer = canvasView.gridLayer;
+    canvasTokenLayer = canvasView.tokenLayer;
     rightSidebarRoot = rightSidebar.root;
     topBarRoom = topBar.room;
     topBarStatus = topBar.status;
@@ -348,9 +330,6 @@ function setGameView(session: Session) {
     tabButtons = rightSidebar.tabs;
     tabContents = rightSidebar.contents;
     bottomControls = bottom;
-
-    const grid = canvasView.grid;
-    grid.dataset.grid = "true";
 
     toggleSidebarBtn.addEventListener("click", () => {
       if (!rightSidebarRoot) {
@@ -410,6 +389,17 @@ function setGameView(session: Session) {
           isPanning = true;
           panStart = { x: event.clientX - panOffset.x, y: event.clientY - panOffset.y };
           canvasViewport?.setPointerCapture(event.pointerId);
+          return;
+        }
+        if (activeTool === "token" && event.button === 0) {
+          const coords = getGridCoordinates(event);
+          if (coords) {
+            tokenPosition = {
+              x: Math.max(0, Math.min(gridSize - 1, coords.x)),
+              y: Math.max(0, Math.min(gridSize - 1, coords.y))
+            };
+            renderGameGrid();
+          }
           return;
         }
         if (activeTool === "measure") {
@@ -605,9 +595,11 @@ let zoomLevel = 1;
 let panOffset = { x: 0, y: 0 };
 let isPanning = false;
 let panStart = { x: 0, y: 0 };
-let canvasInner: HTMLDivElement | null = null;
+let canvasWorld: HTMLDivElement | null = null;
 let canvasViewport: HTMLDivElement | null = null;
 let canvasOverlay: HTMLDivElement | null = null;
+let canvasGridLayer: HTMLDivElement | null = null;
+let canvasTokenLayer: HTMLDivElement | null = null;
 let gamePosition: HTMLDivElement | null = null;
 let rightSidebarRoot: HTMLDivElement | null = null;
 let topBarRoom: HTMLSpanElement | null = null;
