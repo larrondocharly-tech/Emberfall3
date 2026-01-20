@@ -7,7 +7,9 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -k \"npm:dev --workspace apps/server\" \"npm:dev --workspace apps/client\"",
+    "dev": "npm run dev --workspace apps/client",
+    "dev:server": "npm run dev --workspace apps/server",
+    "dev:all": "concurrently -k \"npm:dev --workspace apps/server\" \"npm:dev --workspace apps/client\"",
     "build": "npm run build --workspace packages/shared && npm run build --workspace apps/server && npm run build --workspace apps/client",
     "lint": "npm run lint --workspace apps/client && npm run lint --workspace apps/server",
     "start": "npm run start --workspace apps/server"
