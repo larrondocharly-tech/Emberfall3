@@ -402,6 +402,7 @@ function resetCombat() {
     round: 0,
     actionState: { hasMoved: false, hasActed: false }
   };
+  isAITurnRunning = false;
   appendChatMessage("Fin du combat.");
   updateCombatInfo();
   renderGameGrid();
@@ -451,6 +452,10 @@ function triggerEnemyTurnIfNeeded() {
   if (!activeToken || activeToken.type === "player") {
     return;
   }
+  if (isAITurnRunning) {
+    return;
+  }
+  isAITurnRunning = true;
   window.setTimeout(() => {
     runEnemyTurn(activeToken.id);
   }, 300);
@@ -458,24 +463,29 @@ function triggerEnemyTurnIfNeeded() {
 
 function runEnemyTurn(tokenId: string) {
   if (!combatState.enabled || !combatState.started) {
+    isAITurnRunning = false;
     return;
   }
   const enemy = getTokenById(tokenId);
   if (!enemy || enemy.type === "player") {
+    isAITurnRunning = false;
     return;
   }
   if (getActiveCombatTokenId() !== enemy.id) {
+    isAITurnRunning = false;
     return;
   }
   const action = getEnemyAction(enemy, gameState.tokens);
   if (!action.targetId) {
     appendChatMessage(`${enemy.name} ne trouve aucune cible.`);
+    isAITurnRunning = false;
     endTurn();
     return;
   }
   const target = getTokenById(action.targetId);
   if (!target || target.id === enemy.id) {
     appendChatMessage(`${enemy.name} ne trouve aucune cible.`);
+    isAITurnRunning = false;
     endTurn();
     return;
   }
@@ -520,6 +530,7 @@ function runEnemyTurn(tokenId: string) {
   } else {
     appendChatMessage(`${enemy.name} est trop loin pour attaquer.`);
   }
+  isAITurnRunning = false;
   endTurn();
 }
 
@@ -1510,6 +1521,7 @@ let combatState = {
   round: 0,
   actionState: { hasMoved: false, hasActed: false }
 };
+let isAITurnRunning = false;
 
 class GameScene extends Phaser.Scene {
   private tokenSprites = new Map<string, Phaser.GameObjects.Arc>();
