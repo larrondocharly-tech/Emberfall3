@@ -220,24 +220,32 @@
         position: absolute;
         inset: 0;
       }
-      .vtt-layer-map img {
-        width: 100%;
-        height: 100%;
-        object-fit: contain;
-        display: block;
-      }
       .vtt-layer-map {
         pointer-events: none;
+        z-index: 0;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+      }
+      .vtt-layer-map img {
+        width: 1200px;
+        height: auto;
+        display: block;
+        position: relative;
+        object-fit: unset;
       }
       .vtt-layer-grid {
         pointer-events: none;
         opacity: 0.25;
+        z-index: 1;
       }
       .vtt-layer-tokens {
         pointer-events: none;
+        z-index: 2;
       }
       .vtt-layer-overlay {
         pointer-events: none;
+        z-index: 3;
       }
       .vtt-token {
         position: absolute;
