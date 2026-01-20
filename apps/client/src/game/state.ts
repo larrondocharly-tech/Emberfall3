@@ -1,3 +1,6 @@
+import type { Scene } from "./scenes";
+import { defaultSceneId, getSceneById } from "./scenes";
+
 export type PlayerProfile = {
   name: string;
   raceId: string;
@@ -24,9 +27,5 @@ export type GameState = {
 
 export const initialState: GameState = {
   session: null,
-  scene: {
-    id: "tavern",
-    name: "Taverne",
-    mapUrl: "/data/maps/tavern_01.webp"
-  }
+  scene: getSceneById(defaultSceneId)
 };
