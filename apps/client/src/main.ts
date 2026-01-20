@@ -15,6 +15,7 @@ import type { Tool } from "./game/tools";
 import type { Scene } from "./game/scenes";
 import { scenes } from "./game/scenes";
 import { chebyshevDistance, isInMeleeRange, resolveAttack } from "./game/combat";
+import { rollD20 } from "./game/dice";
 import { createTopBar } from "./ui/vtt/TopBar";
 import { createLeftToolbar } from "./ui/vtt/LeftToolbar";
 import type { SidebarTab } from "./ui/vtt/RightSidebar";
@@ -249,14 +250,20 @@ function updateTokenPosition(id: string, position: { x: number; y: number }) {
       token.id === id ? { ...token, x: position.x, y: position.y } : token
     )
   };
+  if (combatState.enabled && combatState.started && id === getActiveCombatTokenId()) {
+    combatState = {
+      ...combatState,
+      actionState: { ...combatState.actionState, hasMoved: true }
+    };
+  }
 }
 
 function addToken(type: TokenType) {
   const center = Math.floor(gridSize / 2);
   const defaults =
     type === "monster"
-      ? { hp: 10, maxHp: 10, ac: 12, attackBonus: 4, damage: "1d8+2", color: "#f87171" }
-      : { hp: 8, maxHp: 8, ac: 12, attackBonus: 3, damage: "1d6+1", color: "#22c55e" };
+      ? { hp: 10, maxHp: 10, ac: 12, attackBonus: 4, initBonus: 2, damage: "1d8+2", color: "#f87171" }
+      : { hp: 8, maxHp: 8, ac: 12, attackBonus: 3, initBonus: 1, damage: "1d6+1", color: "#22c55e" };
   const token: GameToken = {
     id: `${type}-${tokenIdCounter++}`,
     name: type === "monster" ? "Monstre" : "PNJ",
@@ -269,6 +276,7 @@ function addToken(type: TokenType) {
     maxHp: defaults.maxHp,
     ac: defaults.ac,
     attackBonus: defaults.attackBonus,
+    initBonus: defaults.initBonus,
     damage: defaults.damage
   };
   gameState = { ...gameState, tokens: [...gameState.tokens, token] };
@@ -295,8 +303,8 @@ function updateCombatToggle() {
   if (!combatToggleBtn) {
     return;
   }
-  combatToggleBtn.textContent = combatEnabled ? "Combat: ON" : "Combat: OFF";
-  combatToggleBtn.classList.toggle("active", combatEnabled);
+  combatToggleBtn.textContent = combatState.enabled ? "Combat: ON" : "Combat: OFF";
+  combatToggleBtn.classList.toggle("active", combatState.enabled);
 }
 
 function getDistanceBetweenTokens(attacker: GameToken, target: GameToken) {
@@ -305,6 +313,127 @@ function getDistanceBetweenTokens(attacker: GameToken, target: GameToken) {
 
 function appendChatMessage(message: string) {
   appendChat(message);
+}
+
+function getActiveCombatTokenId() {
+  if (!combatState.started) {
+    return null;
+  }
+  return combatState.initiativeOrder[combatState.activeIndex] ?? null;
+}
+
+function getActiveCombatToken() {
+  const tokenId = getActiveCombatTokenId();
+  return getTokenById(tokenId);
+}
+
+function updateCombatInfo() {
+  if (!combatInfo) {
+    return;
+  }
+  if (vttEndTurnBtn) {
+    vttEndTurnBtn.style.display = combatState.enabled ? "inline-flex" : "none";
+  }
+  if (!combatState.enabled) {
+    combatInfo.textContent = "Exploration";
+    return;
+  }
+  if (!combatState.started) {
+    combatInfo.textContent = "Combat (préparation)";
+    if (vttEndTurnBtn) {
+      vttEndTurnBtn.disabled = true;
+    }
+    return;
+  }
+  const activeToken = getActiveCombatToken();
+  const activeName = activeToken?.name ?? "—";
+  combatInfo.textContent = `Round ${combatState.round} · Tour de ${activeName}`;
+  if (vttEndTurnBtn) {
+    vttEndTurnBtn.disabled = false;
+  }
+}
+
+function startCombat() {
+  if (!combatState.enabled || combatState.started) {
+    return;
+  }
+  const rolls = gameState.tokens.map((token) => ({
+    id: token.id,
+    name: token.name,
+    total: rollD20() + token.initBonus
+  }));
+  rolls.sort((a, b) => b.total - a.total);
+  combatState = {
+    ...combatState,
+    started: true,
+    initiativeOrder: rolls.map((roll) => roll.id),
+    activeIndex: 0,
+    round: 1,
+    actionState: { hasMoved: false, hasActed: false }
+  };
+  appendChatMessage("Combat démarré.");
+  appendChatMessage(
+    `Ordre d'initiative: ${rolls.map((roll) => `${roll.name}(${roll.total})`).join(", ")}.`
+  );
+  const activeToken = getActiveCombatToken();
+  if (activeToken) {
+    appendChatMessage(`Tour ${combatState.round}: ${activeToken.name}.`);
+  }
+  updateCombatInfo();
+  if (activeSession) {
+    renderActorsPanel(activeSession);
+  }
+  renderGameGrid();
+}
+
+function resetCombat() {
+  combatState = {
+    ...combatState,
+    enabled: false,
+    started: false,
+    initiativeOrder: [],
+    activeIndex: 0,
+    round: 0,
+    actionState: { hasMoved: false, hasActed: false }
+  };
+  appendChatMessage("Fin du combat.");
+  updateCombatInfo();
+  renderGameGrid();
+  if (activeSession) {
+    renderActorsPanel(activeSession);
+  }
+}
+
+function endTurn() {
+  if (!combatState.enabled || !combatState.started) {
+    return;
+  }
+  if (attackState) {
+    setAttackState(null);
+  }
+  const nextIndex = combatState.activeIndex + 1;
+  let nextRound = combatState.round;
+  let activeIndex = nextIndex;
+  if (nextIndex >= combatState.initiativeOrder.length) {
+    activeIndex = 0;
+    nextRound = combatState.round + 1;
+    appendChatMessage(`Round ${nextRound}.`);
+  }
+  combatState = {
+    ...combatState,
+    activeIndex,
+    round: nextRound,
+    actionState: { hasMoved: false, hasActed: false }
+  };
+  const activeToken = getActiveCombatToken();
+  if (activeToken) {
+    appendChatMessage(`Tour: ${activeToken.name}.`);
+  }
+  updateCombatInfo();
+  if (activeSession) {
+    renderActorsPanel(activeSession);
+  }
+  renderGameGrid();
 }
 
 function setAttackState(attackerId: string | null) {
@@ -336,7 +465,7 @@ function clearMeasure() {
 }
 
 function handleAttackTarget(targetId: string) {
-  if (!attackState || !combatEnabled) {
+  if (!attackState || !combatState.enabled) {
     return;
   }
   const attacker = getTokenById(attackState.attackerId);
@@ -347,6 +476,17 @@ function handleAttackTarget(targetId: string) {
   }
   if (attacker.id === target.id) {
     appendChatMessage(`${attacker.name} ne peut pas s'attaquer lui-même.`);
+    setAttackState(null);
+    return;
+  }
+  const activeTokenId = getActiveCombatTokenId();
+  if (combatState.started && activeTokenId && attacker.id !== activeTokenId) {
+    appendChatMessage("Ce n'est pas son tour.");
+    setAttackState(null);
+    return;
+  }
+  if (combatState.actionState.hasActed) {
+    appendChatMessage("Action déjà utilisée.");
     setAttackState(null);
     return;
   }
@@ -376,6 +516,10 @@ function handleAttackTarget(targetId: string) {
       renderActorsPanel(activeSession);
     }
   }
+  combatState = {
+    ...combatState,
+    actionState: { ...combatState.actionState, hasActed: true }
+  };
   setAttackState(null);
   renderGameGrid();
 }
@@ -526,7 +670,7 @@ function renderGameGrid() {
       token.style.top = `${tokenData.y * step + offsetY + step / 2}px`;
       token.style.background = tokenData.color;
 
-      if (combatEnabled) {
+      if (combatState.enabled) {
         const label = document.createElement("div");
         label.className = "vtt-token-label";
         label.textContent = isKo ? "KO" : `${tokenData.name} ${tokenData.hp}/${tokenData.maxHp}`;
@@ -539,6 +683,14 @@ function renderGameGrid() {
         hpBar.appendChild(hpFill);
         label.appendChild(hpBar);
         token.appendChild(label);
+      }
+      if (combatState.started) {
+        const activeId = getActiveCombatTokenId();
+        if (activeId && tokenData.id === activeId) {
+          token.classList.add("active-turn");
+        } else if (activeId) {
+          token.classList.add("locked");
+        }
       }
       canvasTokenLayer.appendChild(token);
     });
@@ -718,9 +870,20 @@ function renderActorsPanel(session: Session) {
   const attackButton = document.createElement("button");
   attackButton.type = "button";
   attackButton.textContent = attackState ? "Choose Target..." : "Attack";
-  attackButton.disabled = !combatEnabled || !selectedTokenId || Boolean(attackState);
+  attackButton.disabled = !combatState.enabled || !selectedTokenId || Boolean(attackState);
   attackButton.addEventListener("click", () => {
     if (selectedTokenId) {
+      if (combatState.enabled && combatState.started) {
+        const activeId = getActiveCombatTokenId();
+        if (activeId && selectedTokenId !== activeId) {
+          appendChatMessage("Ce n'est pas son tour.");
+          return;
+        }
+        if (combatState.actionState.hasActed) {
+          appendChatMessage("Action déjà utilisée.");
+          return;
+        }
+      }
       setAttackState(selectedTokenId);
       const attacker = getTokenById(selectedTokenId);
       if (attacker) {
@@ -767,6 +930,26 @@ function renderActorsPanel(session: Session) {
     });
     list.appendChild(row);
   });
+
+  if (combatState.enabled && combatState.started) {
+    const initiative = document.createElement("div");
+    initiative.className = "vtt-actors-initiative";
+    initiative.textContent = `Ordre d'initiative (Round ${combatState.round})`;
+    const orderList = document.createElement("div");
+    orderList.className = "vtt-actors-initiative-list";
+    combatState.initiativeOrder.forEach((id, index) => {
+      const token = getTokenById(id);
+      const item = document.createElement("div");
+      item.className = "vtt-actors-initiative-item";
+      item.textContent = token ? `${index + 1}. ${token.name}` : `${index + 1}. ${id}`;
+      if (id === getActiveCombatTokenId()) {
+        item.classList.add("active");
+      }
+      orderList.appendChild(item);
+    });
+    container.appendChild(initiative);
+    container.appendChild(orderList);
+  }
 
   container.appendChild(header);
   container.appendChild(meta);
@@ -819,6 +1002,8 @@ function setGameView(session: Session) {
     topBarTool = topBar.tool;
     toggleSidebarBtn = topBar.toggleSidebar;
     combatToggleBtn = topBar.combatToggle;
+    vttEndTurnBtn = topBar.endTurn;
+    combatInfo = topBar.combatInfo;
     backToLobbyBtn = rightSidebar.backButton;
     tabButtons = rightSidebar.tabs;
     tabContents = rightSidebar.contents;
@@ -833,17 +1018,21 @@ function setGameView(session: Session) {
 
     if (combatToggleBtn) {
       combatToggleBtn.addEventListener("click", () => {
-        combatEnabled = !combatEnabled;
-        if (!combatEnabled) {
+        combatState = { ...combatState, enabled: !combatState.enabled };
+        if (combatState.enabled) {
+          startCombat();
+        } else {
           setAttackState(null);
+          resetCombat();
         }
         updateCombatToggle();
-        renderGameGrid();
-        if (activeSession) {
-          renderActorsPanel(activeSession);
-        }
       });
       updateCombatToggle();
+    }
+    if (vttEndTurnBtn) {
+      vttEndTurnBtn.addEventListener("click", () => {
+        endTurn();
+      });
     }
 
     setActiveTool(activeTool);
@@ -908,7 +1097,18 @@ function setGameView(session: Session) {
         if (activeTool === "token" && event.button === 0) {
           const clickedTokenId = getTokenIdFromEvent(event);
           if (clickedTokenId) {
+            if (combatState.enabled && combatState.started) {
+              const activeId = getActiveCombatTokenId();
+              if (activeId && clickedTokenId !== activeId) {
+                appendChatMessage("Ce n'est pas son tour.");
+                return;
+              }
+            }
             selectToken(clickedTokenId);
+            if (combatState.enabled && combatState.started && combatState.actionState.hasMoved) {
+              appendChatMessage("Déplacement déjà utilisé.");
+              return;
+            }
             draggingTokenId = clickedTokenId;
             canvasViewport?.setPointerCapture(event.pointerId);
             return;
@@ -917,6 +1117,17 @@ function setGameView(session: Session) {
           if (coords) {
             const targetToken = getTokenById(selectedTokenId) ?? getTokenById("player");
             if (targetToken) {
+              if (combatState.enabled && combatState.started) {
+                const activeId = getActiveCombatTokenId();
+                if (activeId && targetToken.id !== activeId) {
+                  appendChatMessage("Ce n'est pas son tour.");
+                  return;
+                }
+                if (combatState.actionState.hasMoved) {
+                  appendChatMessage("Déplacement déjà utilisé.");
+                  return;
+                }
+              }
               updateTokenPosition(targetToken.id, coords);
               selectToken(targetToken.id);
               renderGameGrid();
@@ -949,13 +1160,6 @@ function setGameView(session: Session) {
             measureEnd = coords;
             measureLocked = false;
             renderGameGrid();
-          }
-          return;
-        }
-        if (activeTool === "ping" && event.button === 0) {
-          const coords = getWorldCoordinates(event);
-          if (coords) {
-            createPing(coords.x, coords.y);
           }
           return;
         }
@@ -1068,6 +1272,7 @@ function setGameView(session: Session) {
 
   renderScenesPanel();
   renderActorsPanel(session);
+  updateCombatInfo();
 
   gameView.style.display = "flex";
   soloRoom.style.display = "none";
@@ -1203,12 +1408,22 @@ let gridDebugEnabled = false;
 let selectedTokenId: string | null = "player";
 let draggingTokenId: string | null = null;
 let tokenIdCounter = 1;
-let combatEnabled = false;
 let attackState: { attackerId: string; awaitingTarget: boolean } | null = null;
 let hoveredTokenId: string | null = null;
 let measureLocked = false;
 let vttChatLog: HTMLDivElement | null = null;
 let combatToggleBtn: HTMLButtonElement | null = null;
+let vttEndTurnBtn: HTMLButtonElement | null = null;
+let combatInfo: HTMLSpanElement | null = null;
+let combatState = {
+  enabled: false,
+  started: false,
+  initiativeOrder: [] as string[],
+  activeIndex: 0,
+  round: 0,
+  actionState: { hasMoved: false, hasActed: false },
+  movementAllowance: 6
+};
 
 class GameScene extends Phaser.Scene {
   private tokenSprites = new Map<string, Phaser.GameObjects.Arc>();

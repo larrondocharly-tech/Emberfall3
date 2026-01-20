@@ -28,6 +28,7 @@ export type GameToken = {
   maxHp: number;
   ac: number;
   attackBonus: number;
+  initBonus: number;
   damage: string;
 };
 
@@ -53,6 +54,7 @@ export const initialState: GameState = {
       maxHp: 12,
       ac: 13,
       attackBonus: 5,
+      initBonus: 2,
       damage: "1d8+3"
     }
   ]
