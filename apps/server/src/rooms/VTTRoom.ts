@@ -1,4 +1,4 @@
-import { Room, Client } from "colyseus";
+import { Room, Client } from "@colyseus/core";
 
 type VttState = {
   clients: number;

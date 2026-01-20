@@ -1,10 +1,12 @@
 export type CanvasViewElements = {
   root: HTMLDivElement;
   position: HTMLDivElement;
-  grid: HTMLDivElement;
   viewport: HTMLDivElement;
-  inner: HTMLDivElement;
-  overlay: HTMLDivElement;
+  world: HTMLDivElement;
+  mapLayer: HTMLDivElement;
+  gridLayer: HTMLDivElement;
+  tokenLayer: HTMLDivElement;
+  overlayLayer: HTMLDivElement;
 };
 
 export function createCanvasView(): CanvasViewElements {
@@ -22,26 +24,49 @@ export function createCanvasView(): CanvasViewElements {
   viewport.style.position = "absolute";
   viewport.style.inset = "0";
 
-  const inner = document.createElement("div");
-  inner.className = "vtt-canvas-inner";
-  inner.style.position = "relative";
+  const world = document.createElement("div");
+  world.className = "vtt-canvas-world";
+  world.style.position = "absolute";
+  world.style.left = "0";
+  world.style.top = "0";
+  world.style.transformOrigin = "0 0";
 
-  const grid = document.createElement("div");
-  grid.style.display = "grid";
-  grid.style.gridTemplateColumns = "repeat(12, 24px)";
-  grid.style.gap = "4px";
+  const mapLayer = document.createElement("div");
+  mapLayer.className = "vtt-layer vtt-layer-map";
 
-  const overlay = document.createElement("div");
-  overlay.style.position = "absolute";
-  overlay.style.inset = "0";
-  overlay.style.pointerEvents = "none";
+  const mapImage = document.createElement("img");
+  mapImage.src = "/maps/tavern_01.jpg";
+  mapImage.alt = "Taverne";
+  mapImage.draggable = false;
+  mapLayer.appendChild(mapImage);
 
-  inner.appendChild(grid);
-  inner.appendChild(overlay);
-  viewport.appendChild(inner);
+  const gridLayer = document.createElement("div");
+  gridLayer.className = "vtt-layer vtt-layer-grid";
+  gridLayer.dataset.grid = "true";
+
+  const tokenLayer = document.createElement("div");
+  tokenLayer.className = "vtt-layer vtt-layer-tokens";
+
+  const overlayLayer = document.createElement("div");
+  overlayLayer.className = "vtt-layer vtt-layer-overlay";
+
+  world.appendChild(mapLayer);
+  world.appendChild(gridLayer);
+  world.appendChild(tokenLayer);
+  world.appendChild(overlayLayer);
+  viewport.appendChild(world);
 
   root.appendChild(viewport);
   root.appendChild(header);
 
-  return { root, position, grid, viewport, inner, overlay };
+  return {
+    root,
+    position,
+    viewport,
+    world,
+    mapLayer,
+    gridLayer,
+    tokenLayer,
+    overlayLayer
+  };
 }
