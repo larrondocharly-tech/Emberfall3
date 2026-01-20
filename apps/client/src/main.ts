@@ -295,7 +295,7 @@ function setGameView(session: Session) {
   if (!gameView.hasChildNodes()) {
     const topBar = createTopBar();
     const leftToolbar = createLeftToolbar(activeTool, setActiveTool);
-    const canvasView = createCanvasView();
+    const canvasView = createCanvasView({ mapUrl: gameState.scene.mapUrl });
     const rightSidebar = createRightSidebar();
     const bottom = createBottomControls();
 
@@ -483,7 +483,7 @@ function setGameView(session: Session) {
     topBarRoom.textContent = `Room ${session.id}`;
   }
   if (topBarStatus) {
-    topBarStatus.textContent = "Solo";
+    topBarStatus.textContent = `Solo · Scene: ${gameState.scene.name}`;
   }
     if (tabContents) {
       tabContents.Actors.innerHTML = `<strong>${session.player.name}</strong><div>${raceLabel} • ${classLabel}</div>`;
