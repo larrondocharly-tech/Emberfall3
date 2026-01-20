@@ -16,6 +16,7 @@ import type { Scene } from "./game/scenes";
 import { scenes } from "./game/scenes";
 import { chebyshevDistance, isInMeleeRange, resolveAttack } from "./game/combat";
 import { rollD20 } from "./game/dice";
+import { getEnemyAction } from "./game/enemyAI";
 import { createTopBar } from "./ui/vtt/TopBar";
 import { createLeftToolbar } from "./ui/vtt/LeftToolbar";
 import type { SidebarTab } from "./ui/vtt/RightSidebar";
@@ -244,10 +245,14 @@ function selectToken(id: string | null) {
 }
 
 function updateTokenPosition(id: string, position: { x: number; y: number }) {
+  const clamped = {
+    x: Math.max(0, Math.min(gridSize - 1, position.x)),
+    y: Math.max(0, Math.min(gridSize - 1, position.y))
+  };
   gameState = {
     ...gameState,
     tokens: gameState.tokens.map((token) =>
-      token.id === id ? { ...token, x: position.x, y: position.y } : token
+      token.id === id ? { ...token, x: clamped.x, y: clamped.y } : token
     )
   };
   if (combatState.enabled && combatState.started && id === getActiveCombatTokenId()) {
@@ -349,7 +354,7 @@ function updateCombatInfo() {
   const activeName = activeToken?.name ?? "—";
   combatInfo.textContent = `Round ${combatState.round} · Tour de ${activeName}`;
   if (vttEndTurnBtn) {
-    vttEndTurnBtn.disabled = false;
+    vttEndTurnBtn.disabled = activeToken?.type !== "player";
   }
 }
 
@@ -384,6 +389,7 @@ function startCombat() {
     renderActorsPanel(activeSession);
   }
   renderGameGrid();
+  triggerEnemyTurnIfNeeded();
 }
 
 function resetCombat() {
@@ -434,6 +440,87 @@ function endTurn() {
     renderActorsPanel(activeSession);
   }
   renderGameGrid();
+  triggerEnemyTurnIfNeeded();
+}
+
+function triggerEnemyTurnIfNeeded() {
+  if (!combatState.enabled || !combatState.started) {
+    return;
+  }
+  const activeToken = getActiveCombatToken();
+  if (!activeToken || activeToken.type === "player") {
+    return;
+  }
+  window.setTimeout(() => {
+    runEnemyTurn(activeToken.id);
+  }, 300);
+}
+
+function runEnemyTurn(tokenId: string) {
+  if (!combatState.enabled || !combatState.started) {
+    return;
+  }
+  const enemy = getTokenById(tokenId);
+  if (!enemy || enemy.type === "player") {
+    return;
+  }
+  if (getActiveCombatTokenId() !== enemy.id) {
+    return;
+  }
+  const action = getEnemyAction(enemy, gameState.tokens);
+  if (!action.targetId) {
+    appendChatMessage(`${enemy.name} ne trouve aucune cible.`);
+    endTurn();
+    return;
+  }
+  const target = getTokenById(action.targetId);
+  if (!target || target.id === enemy.id) {
+    appendChatMessage(`${enemy.name} ne trouve aucune cible.`);
+    endTurn();
+    return;
+  }
+  if (action.nextPosition && combatState.actionState.hasMoved === false) {
+    updateTokenPosition(enemy.id, action.nextPosition);
+    combatState = {
+      ...combatState,
+      actionState: { ...combatState.actionState, hasMoved: true }
+    };
+    renderGameGrid();
+  }
+  const distance = getDistanceBetweenTokens(
+    getTokenById(enemy.id) ?? enemy,
+    target
+  );
+  if (distance <= 1 && !combatState.actionState.hasActed) {
+    const result = resolveAttack(enemy, target);
+    const rollText = `${result.roll} + ${enemy.attackBonus} = ${result.total}`;
+    const outcome = result.hit ? "HIT" : "MISS";
+    appendChatMessage(
+      `${enemy.name} attaque ${target.name}: d20(${rollText}) vs AC ${target.ac} → ${outcome}`
+    );
+    if (result.hit) {
+      const rolls = result.damageRolls.length ? result.damageRolls.join(", ") : "-";
+      const damageText = `${enemy.damage} [${rolls}]`;
+      gameState = {
+        ...gameState,
+        tokens: gameState.tokens.map((token) =>
+          token.id === target.id ? { ...token, hp: result.remainingHp } : token
+        )
+      };
+      appendChatMessage(`Dégâts: ${damageText} = ${result.damageTotal}. PV ${target.name}: ${result.remainingHp}/${target.maxHp}`);
+      if (activeSession) {
+        renderActorsPanel(activeSession);
+      }
+      renderGameGrid();
+    }
+    combatState = {
+      ...combatState,
+      actionState: { ...combatState.actionState, hasActed: true }
+    };
+  } else {
+    appendChatMessage(`${enemy.name} est trop loin pour attaquer.`);
+  }
+  endTurn();
 }
 
 function setAttackState(attackerId: string | null) {
@@ -1421,8 +1508,7 @@ let combatState = {
   initiativeOrder: [] as string[],
   activeIndex: 0,
   round: 0,
-  actionState: { hasMoved: false, hasActed: false },
-  movementAllowance: 6
+  actionState: { hasMoved: false, hasActed: false }
 };
 
 class GameScene extends Phaser.Scene {
