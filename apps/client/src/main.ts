@@ -117,6 +117,7 @@ function navigateToLobby() {
 }
 
 function renderGameGrid() {
+  gamePosition.textContent = `Position: (${tokenPosition.x}, ${tokenPosition.y})`;
   gameGrid.innerHTML = "";
   for (let y = 0; y < gridSize; y += 1) {
     for (let x = 0; x < gridSize; x += 1) {
@@ -125,6 +126,7 @@ function renderGameGrid() {
       cell.style.height = "24px";
       cell.style.background = "#1e293b";
       cell.style.border = "1px solid #334155";
+      cell.style.transition = "border-color 120ms ease, box-shadow 120ms ease";
       cell.style.display = "flex";
       cell.style.alignItems = "center";
       cell.style.justifyContent = "center";
@@ -135,10 +137,22 @@ function renderGameGrid() {
         token.style.height = "12px";
         token.style.borderRadius = "999px";
         token.style.background = "#38bdf8";
+        token.style.transition = "transform 120ms ease";
         cell.appendChild(token);
       }
+      cell.addEventListener("mouseenter", () => {
+        cell.style.borderColor = "#94a3b8";
+        cell.style.boxShadow = "0 0 0 2px rgba(148, 163, 184, 0.4)";
+      });
+      cell.addEventListener("mouseleave", () => {
+        cell.style.borderColor = "#334155";
+        cell.style.boxShadow = "";
+      });
       cell.addEventListener("click", () => {
-        tokenPosition = { x, y };
+        tokenPosition = {
+          x: Math.max(0, Math.min(gridSize - 1, x)),
+          y: Math.max(0, Math.min(gridSize - 1, y))
+        };
         renderGameGrid();
       });
       gameGrid.appendChild(cell);
@@ -212,6 +226,7 @@ const enterGameBtn = document.getElementById("enterGame") as HTMLButtonElement;
 const gameView = document.getElementById("gameView") as HTMLDivElement;
 const gameTitle = document.getElementById("gameTitle") as HTMLDivElement;
 const gamePlayer = document.getElementById("gamePlayer") as HTMLDivElement;
+const gamePosition = document.getElementById("gamePosition") as HTMLDivElement;
 const gameGrid = document.getElementById("gameGrid") as HTMLDivElement;
 const backToLobbyBtn = document.getElementById("backToLobby") as HTMLButtonElement;
 const copyRoomCodeBtn = document.getElementById("copyRoomCode") as HTMLButtonElement;
