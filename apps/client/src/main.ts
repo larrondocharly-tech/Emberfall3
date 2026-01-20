@@ -1,9 +1,16 @@
 import Phaser from "phaser";
-import { Client, Room } from "colyseus.js";
+import type { Room } from "colyseus.js";
 import type { ClassData, MonsterData, RaceData, SpellData } from "@emberfall3/shared";
-import { WS_BASE } from "./config";
+import { dataApi } from "./lib/dataApi";
+import { FEATURE_MULTIPLAYER } from "./config/features";
+import { createLocalAdapter } from "./adapters/localAdapter";
+import { createNetworkAdapter } from "./adapters/networkAdapter";
+import type { GameAdapter } from "./adapters/types";
+import type { PlayerProfile, Session } from "./game/state";
+import { initialState } from "./game/state";
+import { applyAction } from "./game/reducer";
+import { findSessionById } from "./game/engine";
 
-const SERVER_URL = WS_BASE;
 const WORLD_WIDTH = 1024;
 const WORLD_HEIGHT = 768;
 const TILE_SIZE = 64;
@@ -62,14 +69,83 @@ type GameStateSchema = {
   combat: CombatStateSchema;
 };
 
+function dispatch(action: Parameters<typeof applyAction>[1]) {
+  gameState = applyAction(gameState, action);
+}
+
+function getPlayerProfile(): PlayerProfile {
+  return {
+    name: playerNameInput.value.trim() || "Aventurier",
+    raceId: raceSelect.value || "human",
+    classId: classSelect.value || "fighter"
+  };
+}
+
+function setSoloView(session: Session | null) {
+  if (session) {
+    soloSessionId.textContent = `Session: ${session.id}`;
+    soloPlayerName.textContent = `Pseudo: ${session.player.name}`;
+    const raceLabel = races.find((race) => race.id === session.player.raceId)?.name ?? session.player.raceId;
+    const classLabel =
+      classes.find((entry) => entry.id === session.player.classId)?.name ?? session.player.classId;
+    soloPlayerClass.textContent = `Race/Classe: ${raceLabel} · ${classLabel}`;
+    soloRoom.style.display = "flex";
+    lobby.style.display = "none";
+    hud.style.display = "none";
+    chat.style.display = "none";
+    combatPanel.style.display = "none";
+  } else {
+    soloRoom.style.display = "none";
+    lobby.style.display = "flex";
+    hud.style.display = "flex";
+    chat.style.display = "flex";
+    combatPanel.style.display = "none";
+  }
+}
+
+function navigateToRoom(session: Session) {
+  window.history.pushState({}, "", `/room/${session.id}`);
+  setSoloView(session);
+}
+
+function navigateToLobby() {
+  window.history.pushState({}, "", "/");
+  setSoloView(null);
+}
+
+function syncRouteFromLocation() {
+  const path = window.location.pathname;
+  const roomId = path.startsWith("/room/") ? path.slice("/room/".length) : null;
+  if (!roomId) {
+    setSoloView(null);
+    return;
+  }
+  const existingSession = findSessionById(roomId);
+  if (!existingSession) {
+    roomInfo.textContent = "Room introuvable (solo local).";
+    navigateToLobby();
+    return;
+  }
+  activeSession = existingSession;
+  dispatch({ type: "SESSION_JOINED", session: existingSession });
+  setSoloView(existingSession);
+}
+
 const lobby = document.getElementById("lobby") as HTMLDivElement;
 const createRoomBtn = document.getElementById("createRoom") as HTMLButtonElement;
 const joinRoomBtn = document.getElementById("joinRoom") as HTMLButtonElement;
 const playerNameInput = document.getElementById("playerName") as HTMLInputElement;
 const roomCodeInput = document.getElementById("roomCode") as HTMLInputElement;
 const roomInfo = document.getElementById("roomInfo") as HTMLDivElement;
+const soloRoom = document.getElementById("soloRoom") as HTMLDivElement;
+const soloSessionId = document.getElementById("soloSessionId") as HTMLDivElement;
+const soloPlayerName = document.getElementById("soloPlayerName") as HTMLDivElement;
+const soloPlayerClass = document.getElementById("soloPlayerClass") as HTMLDivElement;
+const leaveRoomBtn = document.getElementById("leaveRoom") as HTMLButtonElement;
 const statusText = document.getElementById("status") as HTMLDivElement;
 const gmPanel = document.getElementById("gmPanel") as HTMLDivElement;
+const hud = document.getElementById("hud") as HTMLDivElement;
+const chat = document.getElementById("chat") as HTMLDivElement;
 const monsterSelect = document.getElementById("monsterSelect") as HTMLSelectElement;
 const spawnMonsterBtn = document.getElementById("spawnMonster") as HTMLButtonElement;
 const startCombatBtn = document.getElementById("startCombat") as HTMLButtonElement;
@@ -88,8 +164,9 @@ const chatInput = document.getElementById("chatInput") as HTMLInputElement;
 const raceSelect = document.getElementById("raceSelect") as HTMLSelectElement;
 const classSelect = document.getElementById("classSelect") as HTMLSelectElement;
 
-const client = new Client(SERVER_URL);
-let room: Room<any> | null = null;
+const adapter: GameAdapter = FEATURE_MULTIPLAYER ? createNetworkAdapter() : createLocalAdapter();
+let gameState = initialState;
+let room: Room<GameStateSchema> | null = null;
 let sessionId: string | null = null;
 let gridVisible = true;
 let races: RaceData[] = [];
@@ -97,6 +174,7 @@ let classes: ClassData[] = [];
 let spells: SpellData[] = [];
 let monsters: MonsterData[] = [];
 let lastPointer = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
+let activeSession: Session | null = null;
 
 class GameScene extends Phaser.Scene {
   private tokenSprites = new Map<string, Phaser.GameObjects.Arc>();
@@ -397,10 +475,10 @@ function playSpellVfx(scene: Phaser.Scene, spellId: string, from: { x: number; y
 
 async function loadData() {
   const [racesData, classesData, spellsData, monstersData] = await Promise.all([
-    fetch("/data/races").then((res) => res.json()),
-    fetch("/data/classes").then((res) => res.json()),
-    fetch("/data/spells").then((res) => res.json()),
-    fetch("/data/monsters").then((res) => res.json())
+    dataApi.races(),
+    dataApi.classes(),
+    dataApi.spells(),
+    dataApi.monsters()
   ]);
   races = racesData as RaceData[];
   classes = classesData as ClassData[];
@@ -414,28 +492,40 @@ async function loadData() {
 }
 
 async function createRoom() {
-  const name = playerNameInput.value.trim() || "MJ";
-  const raceId = raceSelect.value || "human";
-  const classId = classSelect.value || "fighter";
-  room = await client.joinOrCreate("vtt", { name, raceId, classId });
-  enterRoom(room);
-  roomInfo.textContent = `Code de room : ${room.id}`;
+  try {
+    const player = { ...getPlayerProfile(), name: playerNameInput.value.trim() || "MJ" };
+    const result = await adapter.createRoom(player);
+    activeSession = result.session;
+    dispatch({ type: "SESSION_CREATED", session: result.session });
+    roomInfo.textContent = `Code de room : ${result.session.id}`;
+    navigateToRoom(result.session);
+  } catch (error) {
+    console.error("Failed to create room:", error);
+    roomInfo.textContent = "Mode solo actif. Multijoueur bientôt disponible.";
+  }
 }
 
 async function joinRoom() {
-  const name = playerNameInput.value.trim() || "Aventurier";
-  const raceId = raceSelect.value || "human";
-  const classId = classSelect.value || "fighter";
-  const code = roomCodeInput.value.trim();
-  if (!code) {
-    roomInfo.textContent = "Entrez un code.";
-    return;
+  try {
+    const player = getPlayerProfile();
+    const code = roomCodeInput.value.trim();
+    if (!code) {
+      roomInfo.textContent = "Entrez un code.";
+      return;
+    }
+    const result = await adapter.joinRoomById(code, player);
+    activeSession = result.session;
+    dispatch({ type: "SESSION_JOINED", session: result.session });
+    roomInfo.textContent = `Code de room : ${result.session.id}`;
+    navigateToRoom(result.session);
+  } catch (error) {
+    console.error("Failed to join room:", error);
+    roomInfo.textContent =
+      error instanceof Error ? error.message : "Room introuvable (solo local).";
   }
-  room = await client.joinById(code, { name, raceId, classId });
-  enterRoom(room);
 }
 
-function enterRoom(activeRoom: Room<any>) {
+function enterRoom(activeRoom: Room<GameStateSchema>) {
   room = activeRoom;
   sessionId = activeRoom.sessionId;
   lobby.style.display = "none";
@@ -444,15 +534,17 @@ function enterRoom(activeRoom: Room<any>) {
 }
 
 createRoomBtn.addEventListener("click", () => {
-  createRoom().catch((error) => {
-    roomInfo.textContent = `Erreur: ${error.message}`;
-  });
+  void createRoom();
 });
 
 joinRoomBtn.addEventListener("click", () => {
-  joinRoom().catch((error) => {
-    roomInfo.textContent = `Erreur: ${error.message}`;
-  });
+  void joinRoom();
+});
+
+leaveRoomBtn.addEventListener("click", () => {
+  activeSession = null;
+  dispatch({ type: "SESSION_LEFT" });
+  navigateToLobby();
 });
 
 spawnMonsterBtn.addEventListener("click", () => {
@@ -502,9 +594,21 @@ chatInput.addEventListener("keydown", (event) => {
 });
 
 setStatus("En attente de connexion...");
+if (!FEATURE_MULTIPLAYER) {
+  roomInfo.textContent = "Mode solo actif. Multijoueur bientôt disponible.";
+}
 
-loadData().catch(() => {
-  roomInfo.textContent = "Impossible de charger les données. Lancez le serveur.";
+loadData()
+  .then(() => {
+    syncRouteFromLocation();
+  })
+  .catch((error) => {
+    console.error("Failed to load local data:", error);
+    roomInfo.textContent = "Impossible de charger les données locales.";
+  });
+
+window.addEventListener("popstate", () => {
+  syncRouteFromLocation();
 });
 
 void game;

@@ -1,0 +1,23 @@
+[
+  {
+    "id": "goblin",
+    "name": "Gobelin",
+    "hp": 6,
+    "dex": 2,
+    "movePoints": 4
+  },
+  {
+    "id": "skeleton",
+    "name": "Squelette",
+    "hp": 8,
+    "dex": 1,
+    "movePoints": 3
+  },
+  {
+    "id": "wolf",
+    "name": "Loup",
+    "hp": 10,
+    "dex": 3,
+    "movePoints": 5
+  }
+]
