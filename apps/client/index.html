@@ -210,10 +210,42 @@
         height: 100%;
         overflow: hidden;
       }
-      .vtt-canvas-inner {
+      .vtt-canvas-world {
+        position: absolute;
+        left: 0;
+        top: 0;
+        transform-origin: 0 0;
+      }
+      .vtt-layer {
+        position: absolute;
+        inset: 0;
+      }
+      .vtt-layer-map img {
         width: 100%;
         height: 100%;
-        transform-origin: 0 0;
+        object-fit: contain;
+        display: block;
+      }
+      .vtt-layer-map {
+        pointer-events: none;
+      }
+      .vtt-layer-grid {
+        pointer-events: none;
+        opacity: 0.25;
+      }
+      .vtt-layer-tokens {
+        pointer-events: none;
+      }
+      .vtt-layer-overlay {
+        pointer-events: none;
+      }
+      .vtt-token {
+        position: absolute;
+        border-radius: 999px;
+        background: radial-gradient(circle at 30% 30%, #7dd3fc, #0ea5e9 60%, #0369a1);
+        border: 2px solid rgba(15, 23, 42, 0.8);
+        box-shadow: 0 0 12px rgba(14, 165, 233, 0.55);
+        transform: translate(-50%, -50%);
       }
       .vtt-right-sidebar {
         position: sticky;
