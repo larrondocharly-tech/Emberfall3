@@ -4,6 +4,7 @@ export type TopBarElements = {
   status: HTMLSpanElement;
   tool: HTMLSpanElement;
   toggleSidebar: HTMLButtonElement;
+  combatToggle: HTMLButtonElement;
 };
 
 export function createTopBar(): TopBarElements {
@@ -26,13 +27,18 @@ export function createTopBar(): TopBarElements {
   toggleSidebar.type = "button";
   toggleSidebar.textContent = "☰";
 
+  const combatToggle = document.createElement("button");
+  combatToggle.type = "button";
+  combatToggle.textContent = "Combat: OFF";
+
   meta.appendChild(room);
   meta.appendChild(status);
   meta.appendChild(tool);
+  meta.appendChild(combatToggle);
   meta.appendChild(toggleSidebar);
 
   root.appendChild(title);
   root.appendChild(meta);
 
-  return { root, room, status, tool, toggleSidebar };
+  return { root, room, status, tool, toggleSidebar, combatToggle };
 }

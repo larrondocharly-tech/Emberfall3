@@ -9,7 +9,12 @@ export type CanvasViewElements = {
   overlayLayer: HTMLDivElement;
 };
 
-export function createCanvasView(): CanvasViewElements {
+export type CanvasViewOptions = {
+  mapUrl?: string;
+};
+
+export function createCanvasView(options: CanvasViewOptions = {}): CanvasViewElements {
+  const { mapUrl = "/data/maps/tavern_01.webp" } = options;
   const root = document.createElement("div");
   root.className = "vtt-canvas";
 
@@ -33,12 +38,7 @@ export function createCanvasView(): CanvasViewElements {
 
   const mapLayer = document.createElement("div");
   mapLayer.className = "vtt-layer vtt-layer-map";
-
-  const mapImage = document.createElement("img");
-  mapImage.src = "/maps/tavern_01.jpg";
-  mapImage.alt = "Taverne";
-  mapImage.draggable = false;
-  mapLayer.appendChild(mapImage);
+  mapLayer.style.backgroundImage = `url("${mapUrl}")`;
 
   const gridLayer = document.createElement("div");
   gridLayer.className = "vtt-layer vtt-layer-grid";
