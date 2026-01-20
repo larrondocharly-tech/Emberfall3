@@ -147,6 +147,9 @@
         z-index: 12;
       }
       .vtt-topbar {
+        position: sticky;
+        top: 0;
+        z-index: 50;
         height: 44px;
         background: #111827;
         border-bottom: 1px solid #1f2937;
@@ -162,6 +165,9 @@
         min-height: 0;
       }
       .vtt-left-toolbar {
+        position: sticky;
+        top: 44px;
+        z-index: 40;
         width: 60px;
         background: #111827;
         border-right: 1px solid #1f2937;
@@ -183,6 +189,7 @@
         position: relative;
         background: #0f172a;
         overflow: hidden;
+        z-index: 1;
       }
       .vtt-canvas-header {
         position: absolute;
@@ -205,6 +212,9 @@
         transform-origin: 0 0;
       }
       .vtt-right-sidebar {
+        position: sticky;
+        top: 44px;
+        z-index: 40;
         width: 320px;
         background: #111827;
         border-left: 1px solid #1f2937;
@@ -254,7 +264,7 @@
         bottom: 16px;
         display: flex;
         gap: 8px;
-        z-index: 3;
+        z-index: 45;
       }
       .vtt-bottom-controls button {
         background: #1f2937;

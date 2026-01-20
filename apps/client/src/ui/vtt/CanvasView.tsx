@@ -18,6 +18,8 @@ export function createCanvasView(): CanvasViewElements {
 
   const viewport = document.createElement("div");
   viewport.className = "vtt-canvas-viewport";
+  viewport.style.position = "absolute";
+  viewport.style.inset = "0";
 
   const inner = document.createElement("div");
   inner.className = "vtt-canvas-inner";
