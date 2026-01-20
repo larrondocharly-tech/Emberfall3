@@ -11,10 +11,22 @@ export type Session = {
   code: string;
 };
 
+export type Scene = {
+  id: string;
+  name: string;
+  mapUrl: string;
+};
+
 export type GameState = {
   session: Session | null;
+  scene: Scene;
 };
 
 export const initialState: GameState = {
-  session: null
+  session: null,
+  scene: {
+    id: "tavern",
+    name: "Taverne",
+    mapUrl: "/data/maps/tavern_01.webp"
+  }
 };
