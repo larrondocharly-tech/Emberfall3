@@ -10,6 +10,12 @@ import type { PlayerProfile, Session } from "./game/state";
 import { initialState } from "./game/state";
 import { applyAction } from "./game/reducer";
 import { findSessionById } from "./game/engine";
+import { createTopBar } from "./ui/vtt/TopBar";
+import { createLeftToolbar } from "./ui/vtt/LeftToolbar";
+import type { SidebarTab } from "./ui/vtt/RightSidebar";
+import { createRightSidebar } from "./ui/vtt/RightSidebar";
+import { createCanvasView } from "./ui/vtt/CanvasView";
+import { createBottomControls } from "./ui/vtt/BottomControls";
 
 const WORLD_WIDTH = 1024;
 const WORLD_HEIGHT = 768;
@@ -116,8 +122,26 @@ function navigateToLobby() {
   setSoloView(null);
 }
 
+function updateCanvasTransform() {
+  if (!canvasInner) {
+    return;
+  }
+  canvasInner.style.transform = `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomLevel})`;
+}
+
+function clampZoom(value: number) {
+  return Math.min(2, Math.max(0.6, value));
+}
+
 function renderGameGrid() {
+  if (!gamePosition || !canvasInner) {
+    return;
+  }
   gamePosition.textContent = `Position: (${tokenPosition.x}, ${tokenPosition.y})`;
+  const gameGrid = canvasInner.querySelector("[data-grid]") as HTMLDivElement | null;
+  if (!gameGrid) {
+    return;
+  }
   gameGrid.innerHTML = "";
   for (let y = 0; y < gridSize; y += 1) {
     for (let x = 0; x < gridSize; x += 1) {
@@ -125,7 +149,7 @@ function renderGameGrid() {
       cell.style.width = "24px";
       cell.style.height = "24px";
       cell.style.background = "#1e293b";
-      cell.style.border = "1px solid #334155";
+      cell.style.border = gridVisible ? "1px solid #334155" : "1px solid transparent";
       cell.style.transition = "border-color 120ms ease, box-shadow 120ms ease";
       cell.style.display = "flex";
       cell.style.alignItems = "center";
@@ -145,7 +169,7 @@ function renderGameGrid() {
         cell.style.boxShadow = "0 0 0 2px rgba(148, 163, 184, 0.4)";
       });
       cell.addEventListener("mouseleave", () => {
-        cell.style.borderColor = "#334155";
+        cell.style.borderColor = gridVisible ? "#334155" : "transparent";
         cell.style.boxShadow = "";
       });
       cell.addEventListener("click", () => {
@@ -164,14 +188,145 @@ function setGameView(session: Session) {
   const raceLabel = races.find((race) => race.id === session.player.raceId)?.name ?? session.player.raceId;
   const classLabel =
     classes.find((entry) => entry.id === session.player.classId)?.name ?? session.player.classId;
-  gameTitle.textContent = `Jeu — Room ${session.id}`;
-  gamePlayer.textContent = `Pseudo: ${session.player.name} • Race: ${raceLabel} • Classe: ${classLabel}`;
+  if (!gameView.hasChildNodes()) {
+    const topBar = createTopBar();
+    const leftToolbar = createLeftToolbar();
+    const canvasView = createCanvasView();
+    const rightSidebar = createRightSidebar();
+    const bottom = createBottomControls();
+
+    const body = document.createElement("div");
+    body.className = "vtt-body";
+
+    body.appendChild(leftToolbar);
+    body.appendChild(canvasView.root);
+    body.appendChild(rightSidebar.root);
+
+    bottom.root.style.position = "absolute";
+    bottom.root.style.right = "16px";
+    bottom.root.style.bottom = "16px";
+
+    canvasView.root.appendChild(bottom.root);
+
+    gameView.appendChild(topBar.root);
+    gameView.appendChild(body);
+
+    gamePosition = canvasView.position;
+    canvasInner = canvasView.inner;
+    canvasViewport = canvasView.viewport;
+    rightSidebarRoot = rightSidebar.root;
+    topBarRoom = topBar.room;
+    topBarStatus = topBar.status;
+    toggleSidebarBtn = topBar.toggleSidebar;
+    backToLobbyBtn = rightSidebar.backButton;
+    tabButtons = rightSidebar.tabs;
+    tabContents = rightSidebar.contents;
+    bottomControls = bottom;
+
+    const grid = canvasView.grid;
+    grid.dataset.grid = "true";
+
+    toggleSidebarBtn.addEventListener("click", () => {
+      if (!rightSidebarRoot) {
+        return;
+      }
+      rightSidebarRoot.classList.toggle("vtt-sidebar-collapsed");
+    });
+
+    const tabs = tabButtons;
+    const contents = tabContents;
+    if (tabs && contents) {
+      (Object.keys(tabs) as Array<keyof typeof tabs>).forEach((label) => {
+        const tab = tabs[label];
+        tab.addEventListener("click", () => {
+          (Object.keys(tabs) as Array<keyof typeof tabs>).forEach((key) => {
+            tabs[key].classList.toggle("active", key === label);
+            contents[key].style.display = key === label ? "block" : "none";
+          });
+        });
+      });
+    }
+
+    if (bottomControls) {
+      bottomControls.zoomIn.addEventListener("click", () => {
+        zoomLevel = clampZoom(zoomLevel + 0.1);
+        updateCanvasTransform();
+      });
+      bottomControls.zoomOut.addEventListener("click", () => {
+        zoomLevel = clampZoom(zoomLevel - 0.1);
+        updateCanvasTransform();
+      });
+      bottomControls.reset.addEventListener("click", () => {
+        zoomLevel = 1;
+        panOffset = { x: 0, y: 0 };
+        updateCanvasTransform();
+      });
+      bottomControls.toggleGrid.addEventListener("click", () => {
+        gridVisible = !gridVisible;
+        renderGameGrid();
+      });
+    }
+
+    if (backToLobbyBtn) {
+      backToLobbyBtn.addEventListener("click", () => {
+        activeSession = null;
+        dispatch({ type: "SESSION_LEFT" });
+        navigateToLobby();
+      });
+    }
+
+    if (canvasViewport) {
+      const handlePointerDown = (event: PointerEvent) => {
+        if (event.button === 1 || event.shiftKey) {
+          isPanning = true;
+          panStart = { x: event.clientX - panOffset.x, y: event.clientY - panOffset.y };
+          canvasViewport?.setPointerCapture(event.pointerId);
+        }
+      };
+      const handlePointerMove = (event: PointerEvent) => {
+        if (!isPanning) {
+          return;
+        }
+        panOffset = { x: event.clientX - panStart.x, y: event.clientY - panStart.y };
+        updateCanvasTransform();
+      };
+      const handlePointerUp = (event: PointerEvent) => {
+        if (!isPanning) {
+          return;
+        }
+        isPanning = false;
+        canvasViewport?.releasePointerCapture(event.pointerId);
+      };
+      canvasViewport.addEventListener("pointerdown", handlePointerDown);
+      canvasViewport.addEventListener("pointermove", handlePointerMove);
+      canvasViewport.addEventListener("pointerup", handlePointerUp);
+      canvasViewport.addEventListener("pointerleave", handlePointerUp);
+    }
+  }
+
+  if (topBarRoom) {
+    topBarRoom.textContent = `Room ${session.id}`;
+  }
+  if (topBarStatus) {
+    topBarStatus.textContent = "Solo";
+  }
+    if (tabContents) {
+      tabContents.Actors.innerHTML = `<strong>${session.player.name}</strong><div>${raceLabel} • ${classLabel}</div>`;
+      tabContents.Chat.innerHTML =
+        `<div class="vtt-chat-log">Aucun message pour l'instant.</div>` +
+        `<input class="vtt-chat-input" placeholder="Message..." />`;
+      tabContents.Items.textContent = "À venir";
+      tabContents.Journal.textContent = "À venir";
+      tabContents.Scenes.textContent = "À venir";
+    }
+
   gameView.style.display = "flex";
   soloRoom.style.display = "none";
   lobby.style.display = "none";
   hud.style.display = "none";
   chat.style.display = "none";
   combatPanel.style.display = "none";
+  updateCanvasTransform();
   renderGameGrid();
 }
 
@@ -224,11 +379,6 @@ const soloPlayerName = document.getElementById("soloPlayerName") as HTMLDivEleme
 const soloPlayerClass = document.getElementById("soloPlayerClass") as HTMLDivElement;
 const enterGameBtn = document.getElementById("enterGame") as HTMLButtonElement;
 const gameView = document.getElementById("gameView") as HTMLDivElement;
-const gameTitle = document.getElementById("gameTitle") as HTMLDivElement;
-const gamePlayer = document.getElementById("gamePlayer") as HTMLDivElement;
-const gamePosition = document.getElementById("gamePosition") as HTMLDivElement;
-const gameGrid = document.getElementById("gameGrid") as HTMLDivElement;
-const backToLobbyBtn = document.getElementById("backToLobby") as HTMLButtonElement;
 const copyRoomCodeBtn = document.getElementById("copyRoomCode") as HTMLButtonElement;
 const leaveRoomBtn = document.getElementById("leaveRoom") as HTMLButtonElement;
 const statusText = document.getElementById("status") as HTMLDivElement;
@@ -266,6 +416,28 @@ let lastPointer = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
 let activeSession: Session | null = null;
 const gridSize = 12;
 let tokenPosition = { x: 6, y: 6 };
+let zoomLevel = 1;
+let panOffset = { x: 0, y: 0 };
+let isPanning = false;
+let panStart = { x: 0, y: 0 };
+let canvasInner: HTMLDivElement | null = null;
+let canvasViewport: HTMLDivElement | null = null;
+let gamePosition: HTMLDivElement | null = null;
+let rightSidebarRoot: HTMLDivElement | null = null;
+let topBarRoom: HTMLSpanElement | null = null;
+let topBarStatus: HTMLSpanElement | null = null;
+let toggleSidebarBtn: HTMLButtonElement | null = null;
+let backToLobbyBtn: HTMLButtonElement | null = null;
+let tabButtons: Record<SidebarTab, HTMLButtonElement> | null = null;
+let tabContents: Record<SidebarTab, HTMLDivElement> | null = null;
+let bottomControls:
+  | {
+      zoomIn: HTMLButtonElement;
+      zoomOut: HTMLButtonElement;
+      reset: HTMLButtonElement;
+      toggleGrid: HTMLButtonElement;
+    }
+  | null = null;
 
 class GameScene extends Phaser.Scene {
   private tokenSprites = new Map<string, Phaser.GameObjects.Arc>();
@@ -660,11 +832,6 @@ copyRoomCodeBtn.addEventListener("click", async () => {
   }
 });
 
-backToLobbyBtn.addEventListener("click", () => {
-  activeSession = null;
-  dispatch({ type: "SESSION_LEFT" });
-  navigateToLobby();
-});
 
 spawnMonsterBtn.addEventListener("click", () => {
   if (!room) {
