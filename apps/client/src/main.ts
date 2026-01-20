@@ -23,6 +23,7 @@ import type { SidebarTab } from "./ui/vtt/RightSidebar";
 import { createRightSidebar } from "./ui/vtt/RightSidebar";
 import { createCanvasView } from "./ui/vtt/CanvasView";
 import { createBottomControls } from "./ui/vtt/BottomControls";
+import { createCombatHUD } from "./ui/vtt/CombatHUD";
 
 const WORLD_WIDTH = 1024;
 const WORLD_HEIGHT = 768;
@@ -255,12 +256,6 @@ function updateTokenPosition(id: string, position: { x: number; y: number }) {
       token.id === id ? { ...token, x: clamped.x, y: clamped.y } : token
     )
   };
-  if (combatState.enabled && combatState.started && id === getActiveCombatTokenId()) {
-    combatState = {
-      ...combatState,
-      actionState: { ...combatState.actionState, hasMoved: true }
-    };
-  }
 }
 
 function addToken(type: TokenType) {
@@ -282,7 +277,11 @@ function addToken(type: TokenType) {
     ac: defaults.ac,
     attackBonus: defaults.attackBonus,
     initBonus: defaults.initBonus,
-    damage: defaults.damage
+    damage: defaults.damage,
+    actionsPerTurn: 1,
+    movementPerTurn: 6,
+    actionsRemaining: 1,
+    movementRemaining: 6
   };
   gameState = { ...gameState, tokens: [...gameState.tokens, token] };
   selectToken(token.id);
@@ -316,8 +315,57 @@ function getDistanceBetweenTokens(attacker: GameToken, target: GameToken) {
   return chebyshevDistance(attacker, target);
 }
 
+function getMoveCost(from: { x: number; y: number }, to: { x: number; y: number }) {
+  return chebyshevDistance(from, to);
+}
+
 function appendChatMessage(message: string) {
   appendChat(message);
+}
+
+function resetTokenTurnResources(token: GameToken) {
+  return {
+    ...token,
+    actionsRemaining: token.actionsPerTurn,
+    movementRemaining: token.movementPerTurn
+  };
+}
+
+function updateTokenState(id: string, updater: (token: GameToken) => GameToken) {
+  gameState = {
+    ...gameState,
+    tokens: gameState.tokens.map((token) => (token.id === id ? updater(token) : token))
+  };
+}
+
+function canTokenAct(token: GameToken) {
+  return token.actionsRemaining > 0;
+}
+
+function canTokenMove(token: GameToken, cost: number) {
+  return token.movementRemaining >= cost;
+}
+
+function spendTokenAction(tokenId: string) {
+  updateTokenState(tokenId, (token) => ({
+    ...token,
+    actionsRemaining: Math.max(0, token.actionsRemaining - 1)
+  }));
+  updateCombatHUD();
+  if (activeSession) {
+    renderActorsPanel(activeSession);
+  }
+}
+
+function spendTokenMovement(tokenId: string, cost: number) {
+  updateTokenState(tokenId, (token) => ({
+    ...token,
+    movementRemaining: Math.max(0, token.movementRemaining - cost)
+  }));
+  updateCombatHUD();
+  if (activeSession) {
+    renderActorsPanel(activeSession);
+  }
 }
 
 function getActiveCombatTokenId() {
@@ -356,12 +404,105 @@ function updateCombatInfo() {
   if (vttEndTurnBtn) {
     vttEndTurnBtn.disabled = activeToken?.type !== "player";
   }
+  updateCombatHUD();
+  updateChatVisibility();
+}
+
+function updateCombatHUD() {
+  if (!combatHud) {
+    return;
+  }
+  if (!combatState.enabled || !combatState.started) {
+    combatHud.root.style.display = "none";
+    return;
+  }
+  combatHud.root.style.display = "flex";
+  const activeToken = getActiveCombatToken();
+  const activeName = activeToken?.name ?? "—";
+  const activeType =
+    activeToken?.type === "player"
+      ? "Player"
+      : activeToken?.type === "npc"
+        ? "PNJ"
+        : activeToken?.type === "monster"
+          ? "Monstre"
+          : "—";
+  combatHud.tokenName.textContent = activeName;
+  combatHud.tokenType.textContent = activeType;
+  combatHud.round.textContent = `Round: ${combatState.round}`;
+  combatHud.actions.textContent = activeToken
+    ? `Actions restantes: ${activeToken.actionsRemaining}/${activeToken.actionsPerTurn}`
+    : "Actions restantes: —";
+  combatHud.movement.textContent = activeToken
+    ? `Déplacement restant: ${activeToken.movementRemaining}/${activeToken.movementPerTurn} cases`
+    : "Déplacement restant: —";
+
+  const isPlayerTurn = activeToken?.type === "player";
+  const canAct = activeToken ? canTokenAct(activeToken) : false;
+  combatHud.attackButton.disabled = !isPlayerTurn || !canAct || Boolean(attackState);
+  combatHud.spellsButton.disabled = !isPlayerTurn || !canAct;
+  combatHud.itemsButton.disabled = !isPlayerTurn || !canAct;
+  combatHud.endTurnButton.disabled = !isPlayerTurn;
+}
+
+function updateChatVisibility() {
+  if (!tabContents) {
+    return;
+  }
+  if (combatState.enabled) {
+    tabContents.Chat.style.display = "block";
+  }
+}
+
+function requestAttack(attackerId: string) {
+  const attacker = getTokenById(attackerId);
+  if (!attacker) {
+    return;
+  }
+  if (combatState.enabled && combatState.started) {
+    const activeId = getActiveCombatTokenId();
+    if (activeId && attackerId !== activeId) {
+      appendChatMessage("Ce n'est pas votre tour.");
+      return;
+    }
+    if (!canTokenAct(attacker)) {
+      appendChatMessage("Action déjà utilisée.");
+      return;
+    }
+  }
+  setAttackState(attackerId);
+  appendChatMessage(`${attacker.name} choisit une cible...`);
+}
+
+function requestSimpleAction(kind: "spells" | "items") {
+  const activeToken = getActiveCombatToken();
+  if (!combatState.enabled || !combatState.started || !activeToken) {
+    return;
+  }
+  if (activeToken.type !== "player") {
+    appendChatMessage("Ce n'est pas votre tour.");
+    return;
+  }
+  if (!canTokenAct(activeToken)) {
+    appendChatMessage("Action déjà utilisée.");
+    return;
+  }
+  spendTokenAction(activeToken.id);
+  appendChatMessage(kind === "spells" ? "Sorts: à venir." : "Objets: à venir.");
+  updateCombatHUD();
+  if (activeSession) {
+    renderActorsPanel(activeSession);
+  }
 }
 
 function startCombat() {
   if (!combatState.enabled || combatState.started) {
     return;
   }
+  gameState = {
+    ...gameState,
+    tokens: gameState.tokens.map((token) => resetTokenTurnResources(token))
+  };
   const rolls = gameState.tokens.map((token) => ({
     id: token.id,
     name: token.name,
@@ -373,8 +514,7 @@ function startCombat() {
     started: true,
     initiativeOrder: rolls.map((roll) => roll.id),
     activeIndex: 0,
-    round: 1,
-    actionState: { hasMoved: false, hasActed: false }
+    round: 1
   };
   appendChatMessage("Combat démarré.");
   appendChatMessage(
@@ -399,8 +539,11 @@ function resetCombat() {
     started: false,
     initiativeOrder: [],
     activeIndex: 0,
-    round: 0,
-    actionState: { hasMoved: false, hasActed: false }
+    round: 0
+  };
+  gameState = {
+    ...gameState,
+    tokens: gameState.tokens.map((token) => resetTokenTurnResources(token))
   };
   isAITurnRunning = false;
   appendChatMessage("Fin du combat.");
@@ -429,9 +572,12 @@ function endTurn() {
   combatState = {
     ...combatState,
     activeIndex,
-    round: nextRound,
-    actionState: { hasMoved: false, hasActed: false }
+    round: nextRound
   };
+  const nextTokenId = combatState.initiativeOrder[activeIndex];
+  if (nextTokenId) {
+    updateTokenState(nextTokenId, (token) => resetTokenTurnResources(token));
+  }
   const activeToken = getActiveCombatToken();
   if (activeToken) {
     appendChatMessage(`Tour: ${activeToken.name}.`);
@@ -489,19 +635,16 @@ function runEnemyTurn(tokenId: string) {
     endTurn();
     return;
   }
-  if (action.nextPosition && combatState.actionState.hasMoved === false) {
+  if (action.nextPosition && enemy.movementRemaining > 0) {
     updateTokenPosition(enemy.id, action.nextPosition);
-    combatState = {
-      ...combatState,
-      actionState: { ...combatState.actionState, hasMoved: true }
-    };
+    spendTokenMovement(enemy.id, 1);
     renderGameGrid();
   }
   const distance = getDistanceBetweenTokens(
     getTokenById(enemy.id) ?? enemy,
     target
   );
-  if (distance <= 1 && !combatState.actionState.hasActed) {
+  if (distance <= 1 && canTokenAct(enemy)) {
     const result = resolveAttack(enemy, target);
     const rollText = `${result.roll} + ${enemy.attackBonus} = ${result.total}`;
     const outcome = result.hit ? "HIT" : "MISS";
@@ -523,10 +666,7 @@ function runEnemyTurn(tokenId: string) {
       }
       renderGameGrid();
     }
-    combatState = {
-      ...combatState,
-      actionState: { ...combatState.actionState, hasActed: true }
-    };
+    spendTokenAction(enemy.id);
   } else {
     appendChatMessage(`${enemy.name} est trop loin pour attaquer.`);
   }
@@ -579,11 +719,11 @@ function handleAttackTarget(targetId: string) {
   }
   const activeTokenId = getActiveCombatTokenId();
   if (combatState.started && activeTokenId && attacker.id !== activeTokenId) {
-    appendChatMessage("Ce n'est pas son tour.");
+    appendChatMessage("Ce n'est pas votre tour.");
     setAttackState(null);
     return;
   }
-  if (combatState.actionState.hasActed) {
+  if (combatState.started && !canTokenAct(attacker)) {
     appendChatMessage("Action déjà utilisée.");
     setAttackState(null);
     return;
@@ -614,10 +754,9 @@ function handleAttackTarget(targetId: string) {
       renderActorsPanel(activeSession);
     }
   }
-  combatState = {
-    ...combatState,
-    actionState: { ...combatState.actionState, hasActed: true }
-  };
+  if (combatState.started) {
+    spendTokenAction(attacker.id);
+  }
   setAttackState(null);
   renderGameGrid();
 }
@@ -968,25 +1107,19 @@ function renderActorsPanel(session: Session) {
   const attackButton = document.createElement("button");
   attackButton.type = "button";
   attackButton.textContent = attackState ? "Choose Target..." : "Attack";
-  attackButton.disabled = !combatState.enabled || !selectedTokenId || Boolean(attackState);
+  const selectedToken = getTokenById(selectedTokenId);
+  const activeId = getActiveCombatTokenId();
+  const canAttack =
+    combatState.enabled &&
+    combatState.started &&
+    selectedToken &&
+    activeId === selectedToken.id &&
+    canTokenAct(selectedToken) &&
+    !attackState;
+  attackButton.disabled = !canAttack;
   attackButton.addEventListener("click", () => {
     if (selectedTokenId) {
-      if (combatState.enabled && combatState.started) {
-        const activeId = getActiveCombatTokenId();
-        if (activeId && selectedTokenId !== activeId) {
-          appendChatMessage("Ce n'est pas son tour.");
-          return;
-        }
-        if (combatState.actionState.hasActed) {
-          appendChatMessage("Action déjà utilisée.");
-          return;
-        }
-      }
-      setAttackState(selectedTokenId);
-      const attacker = getTokenById(selectedTokenId);
-      if (attacker) {
-        appendChatMessage(`${attacker.name} choisit une cible...`);
-      }
+      requestAttack(selectedTokenId);
     }
   });
 
@@ -1051,7 +1184,6 @@ function renderActorsPanel(session: Session) {
 
   container.appendChild(header);
   container.appendChild(meta);
-  const selectedToken = getTokenById(selectedTokenId);
   if (selectedToken) {
     const stats = document.createElement("div");
     stats.className = "vtt-actors-stats";
@@ -1070,6 +1202,7 @@ function setGameView(session: Session) {
     const canvasView = createCanvasView({ mapUrl: gameState.scene.mapUrl });
     const rightSidebar = createRightSidebar();
     const bottom = createBottomControls();
+    const combatHudView = createCombatHUD();
 
     const body = document.createElement("div");
     body.className = "vtt-body";
@@ -1083,6 +1216,7 @@ function setGameView(session: Session) {
     bottom.root.style.bottom = "16px";
 
     canvasView.root.appendChild(bottom.root);
+    canvasView.root.appendChild(combatHudView.root);
 
     gameView.appendChild(topBar.root);
     gameView.appendChild(body);
@@ -1102,6 +1236,7 @@ function setGameView(session: Session) {
     combatToggleBtn = topBar.combatToggle;
     vttEndTurnBtn = topBar.endTurn;
     combatInfo = topBar.combatInfo;
+    combatHud = combatHudView;
     backToLobbyBtn = rightSidebar.backButton;
     tabButtons = rightSidebar.tabs;
     tabContents = rightSidebar.contents;
@@ -1132,6 +1267,23 @@ function setGameView(session: Session) {
         endTurn();
       });
     }
+    if (combatHud) {
+      combatHud.attackButton.addEventListener("click", () => {
+        const activeToken = getActiveCombatToken();
+        if (activeToken) {
+          requestAttack(activeToken.id);
+        }
+      });
+      combatHud.spellsButton.addEventListener("click", () => {
+        requestSimpleAction("spells");
+      });
+      combatHud.itemsButton.addEventListener("click", () => {
+        requestSimpleAction("items");
+      });
+      combatHud.endTurnButton.addEventListener("click", () => {
+        endTurn();
+      });
+    }
 
     setActiveTool(activeTool);
 
@@ -1143,8 +1295,16 @@ function setGameView(session: Session) {
         tab.addEventListener("click", () => {
           (Object.keys(tabs) as Array<keyof typeof tabs>).forEach((key) => {
             tabs[key].classList.toggle("active", key === label);
-            contents[key].style.display = key === label ? "block" : "none";
+            const shouldShow = key === label;
+            if (combatState.enabled && key === "Chat") {
+              contents[key].style.display = "block";
+            } else {
+              contents[key].style.display = shouldShow ? "block" : "none";
+            }
           });
+          if (combatState.enabled) {
+            contents.Chat.style.display = "block";
+          }
         });
       });
     }
@@ -1198,16 +1358,23 @@ function setGameView(session: Session) {
             if (combatState.enabled && combatState.started) {
               const activeId = getActiveCombatTokenId();
               if (activeId && clickedTokenId !== activeId) {
-                appendChatMessage("Ce n'est pas son tour.");
+                appendChatMessage("Ce n'est pas votre tour.");
                 return;
               }
             }
-            selectToken(clickedTokenId);
-            if (combatState.enabled && combatState.started && combatState.actionState.hasMoved) {
-              appendChatMessage("Déplacement déjà utilisé.");
+            const token = getTokenById(clickedTokenId);
+            if (!token) {
               return;
             }
+            selectToken(clickedTokenId);
+            if (combatState.enabled && combatState.started) {
+              if (!canTokenMove(token, 1)) {
+                appendChatMessage("Déplacement déjà utilisé.");
+                return;
+              }
+            }
             draggingTokenId = clickedTokenId;
+            draggingTokenStart = { x: token.x, y: token.y };
             canvasViewport?.setPointerCapture(event.pointerId);
             return;
           }
@@ -1218,15 +1385,22 @@ function setGameView(session: Session) {
               if (combatState.enabled && combatState.started) {
                 const activeId = getActiveCombatTokenId();
                 if (activeId && targetToken.id !== activeId) {
-                  appendChatMessage("Ce n'est pas son tour.");
+                  appendChatMessage("Ce n'est pas votre tour.");
                   return;
                 }
-                if (combatState.actionState.hasMoved) {
+                const cost = getMoveCost(targetToken, coords);
+                if (!canTokenMove(targetToken, cost)) {
                   appendChatMessage("Déplacement déjà utilisé.");
                   return;
                 }
               }
               updateTokenPosition(targetToken.id, coords);
+              if (combatState.enabled && combatState.started) {
+                const cost = getMoveCost(targetToken, coords);
+                if (cost > 0) {
+                  spendTokenMovement(targetToken.id, cost);
+                }
+              }
               selectToken(targetToken.id);
               renderGameGrid();
             }
@@ -1290,6 +1464,15 @@ function setGameView(session: Session) {
         if (draggingTokenId && activeTool === "token") {
           const coords = getGridCoordinates(event);
           if (coords) {
+            if (combatState.enabled && combatState.started && draggingTokenStart) {
+              const token = getTokenById(draggingTokenId);
+              if (token) {
+                const cost = getMoveCost(draggingTokenStart, coords);
+                if (!canTokenMove(token, cost)) {
+                  return;
+                }
+              }
+            }
             updateTokenPosition(draggingTokenId, coords);
             renderGameGrid();
           }
@@ -1327,7 +1510,17 @@ function setGameView(session: Session) {
           return;
         }
         if (draggingTokenId) {
+          if (combatState.enabled && combatState.started && draggingTokenStart) {
+            const token = getTokenById(draggingTokenId);
+            if (token) {
+              const cost = getMoveCost(draggingTokenStart, token);
+              if (cost > 0) {
+                spendTokenMovement(draggingTokenId, cost);
+              }
+            }
+          }
           draggingTokenId = null;
+          draggingTokenStart = null;
           canvasViewport?.releasePointerCapture(event.pointerId);
           return;
         }
@@ -1505,6 +1698,7 @@ let drawZones: Array<{ x: number; y: number; width: number; height: number }> = 
 let gridDebugEnabled = false;
 let selectedTokenId: string | null = "player";
 let draggingTokenId: string | null = null;
+let draggingTokenStart: { x: number; y: number } | null = null;
 let tokenIdCounter = 1;
 let attackState: { attackerId: string; awaitingTarget: boolean } | null = null;
 let hoveredTokenId: string | null = null;
@@ -1513,13 +1707,26 @@ let vttChatLog: HTMLDivElement | null = null;
 let combatToggleBtn: HTMLButtonElement | null = null;
 let vttEndTurnBtn: HTMLButtonElement | null = null;
 let combatInfo: HTMLSpanElement | null = null;
+let combatHud:
+  | {
+      root: HTMLDivElement;
+      tokenName: HTMLSpanElement;
+      tokenType: HTMLSpanElement;
+      round: HTMLSpanElement;
+      actions: HTMLSpanElement;
+      movement: HTMLSpanElement;
+      attackButton: HTMLButtonElement;
+      spellsButton: HTMLButtonElement;
+      itemsButton: HTMLButtonElement;
+      endTurnButton: HTMLButtonElement;
+    }
+  | null = null;
 let combatState = {
   enabled: false,
   started: false,
   initiativeOrder: [] as string[],
   activeIndex: 0,
-  round: 0,
-  actionState: { hasMoved: false, hasActed: false }
+  round: 0
 };
 let isAITurnRunning = false;
 

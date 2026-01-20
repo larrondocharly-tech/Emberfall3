@@ -30,6 +30,10 @@ export type GameToken = {
   attackBonus: number;
   initBonus: number;
   damage: string;
+  actionsPerTurn: number;
+  movementPerTurn: number;
+  actionsRemaining: number;
+  movementRemaining: number;
 };
 
 export type GameState = {
@@ -55,7 +59,11 @@ export const initialState: GameState = {
       ac: 13,
       attackBonus: 5,
       initBonus: 2,
-      damage: "1d8+3"
+      damage: "1d8+3",
+      actionsPerTurn: 1,
+      movementPerTurn: 6,
+      actionsRemaining: 1,
+      movementRemaining: 6
     }
   ]
 };
