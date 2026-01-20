@@ -959,6 +959,13 @@ function setGameView(session: Session) {
           }
           return;
         }
+        if (activeTool === "ping" && event.button === 0) {
+          const coords = getWorldCoordinates(event);
+          if (coords) {
+            createPing(coords.x, coords.y);
+          }
+          return;
+        }
         if (activeTool === "draw") {
           const coords = getGridCoordinates(event);
           if (coords) {
