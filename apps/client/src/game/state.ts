@@ -8,6 +8,7 @@ export type Session = {
   id: string;
   player: PlayerProfile;
   createdAt: string;
+  code: string;
 };
 
 export type GameState = {

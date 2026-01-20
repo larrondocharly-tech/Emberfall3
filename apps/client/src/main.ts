@@ -84,6 +84,7 @@ function getPlayerProfile(): PlayerProfile {
 function setSoloView(session: Session | null) {
   if (session) {
     soloSessionId.textContent = `Session: ${session.id}`;
+    soloSessionCode.textContent = `Code de room: ${session.code || "----"}`;
     soloPlayerName.textContent = `Pseudo: ${session.player.name}`;
     const raceLabel = races.find((race) => race.id === session.player.raceId)?.name ?? session.player.raceId;
     const classLabel =
@@ -139,8 +140,10 @@ const roomCodeInput = document.getElementById("roomCode") as HTMLInputElement;
 const roomInfo = document.getElementById("roomInfo") as HTMLDivElement;
 const soloRoom = document.getElementById("soloRoom") as HTMLDivElement;
 const soloSessionId = document.getElementById("soloSessionId") as HTMLDivElement;
+const soloSessionCode = document.getElementById("soloSessionCode") as HTMLDivElement;
 const soloPlayerName = document.getElementById("soloPlayerName") as HTMLDivElement;
 const soloPlayerClass = document.getElementById("soloPlayerClass") as HTMLDivElement;
+const copyRoomCodeBtn = document.getElementById("copyRoomCode") as HTMLButtonElement;
 const leaveRoomBtn = document.getElementById("leaveRoom") as HTMLButtonElement;
 const statusText = document.getElementById("status") as HTMLDivElement;
 const gmPanel = document.getElementById("gmPanel") as HTMLDivElement;
@@ -497,7 +500,7 @@ async function createRoom() {
     const result = await adapter.createRoom(player);
     activeSession = result.session;
     dispatch({ type: "SESSION_CREATED", session: result.session });
-    roomInfo.textContent = `Code de room : ${result.session.id}`;
+    roomInfo.textContent = `Code de room : ${result.session.code}`;
     navigateToRoom(result.session);
   } catch (error) {
     console.error("Failed to create room:", error);
@@ -516,10 +519,12 @@ async function joinRoom() {
     const result = await adapter.joinRoomById(code, player);
     activeSession = result.session;
     dispatch({ type: "SESSION_JOINED", session: result.session });
-    roomInfo.textContent = `Code de room : ${result.session.id}`;
+    roomInfo.textContent = `Code de room : ${result.session.code}`;
     navigateToRoom(result.session);
   } catch (error) {
-    console.error("Failed to join room:", error);
+    if (!(error instanceof Error && error.message === "Room introuvable (solo local).")) {
+      console.error("Failed to join room:", error);
+    }
     roomInfo.textContent =
       error instanceof Error ? error.message : "Room introuvable (solo local).";
   }
@@ -545,6 +550,19 @@ leaveRoomBtn.addEventListener("click", () => {
   activeSession = null;
   dispatch({ type: "SESSION_LEFT" });
   navigateToLobby();
+});
+
+copyRoomCodeBtn.addEventListener("click", async () => {
+  if (!activeSession) {
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(activeSession.code);
+    roomInfo.textContent = `Code copié: ${activeSession.code}`;
+  } catch (error) {
+    console.error("Failed to copy room code:", error);
+    roomInfo.textContent = "Impossible de copier le code.";
+  }
 });
 
 spawnMonsterBtn.addEventListener("click", () => {

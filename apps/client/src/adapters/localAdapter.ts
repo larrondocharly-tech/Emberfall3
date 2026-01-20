@@ -1,6 +1,6 @@
 import type { GameAdapter, AdapterResult } from "./types";
 import type { PlayerProfile } from "../game/state";
-import { createSession, findSessionById } from "../game/engine";
+import { createSession, findSessionById, findSessionIdByCode } from "../game/engine";
 
 export function createLocalAdapter(): GameAdapter {
   return {
@@ -12,7 +12,9 @@ export function createLocalAdapter(): GameAdapter {
       return { session };
     },
     joinRoomById: async (sessionId: string, player: PlayerProfile): Promise<AdapterResult> => {
-      const session = findSessionById(sessionId);
+      const isShortCode = /^\d{4}$/.test(sessionId);
+      const resolvedId = isShortCode ? findSessionIdByCode(sessionId) : sessionId;
+      const session = resolvedId ? findSessionById(resolvedId) : null;
       if (!session) {
         throw new Error("Room introuvable (solo local).");
       }
