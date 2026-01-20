@@ -1,0 +1,23 @@
+[
+  {
+    "id": "firebolt",
+    "name": "Éclair de feu",
+    "type": "projectile",
+    "color": "#f97316",
+    "damage": 6
+  },
+  {
+    "id": "heal",
+    "name": "Soin mineur",
+    "type": "aura",
+    "color": "#22c55e",
+    "heal": 5
+  },
+  {
+    "id": "ice-spike",
+    "name": "Pique de givre",
+    "type": "impact",
+    "color": "#38bdf8",
+    "damage": 4
+  }
+]
