@@ -14,6 +14,7 @@ import { defaultTool, toolLabels } from "./game/tools";
 import type { Tool } from "./game/tools";
 import type { Scene } from "./game/scenes";
 import { scenes } from "./game/scenes";
+import { chebyshevDistance, isInMeleeRange, resolveAttack } from "./game/combat";
 import { createTopBar } from "./ui/vtt/TopBar";
 import { createLeftToolbar } from "./ui/vtt/LeftToolbar";
 import type { SidebarTab } from "./ui/vtt/RightSidebar";
@@ -252,14 +253,23 @@ function updateTokenPosition(id: string, position: { x: number; y: number }) {
 
 function addToken(type: TokenType) {
   const center = Math.floor(gridSize / 2);
+  const defaults =
+    type === "monster"
+      ? { hp: 10, maxHp: 10, ac: 12, attackBonus: 4, damage: "1d8+2", color: "#f87171" }
+      : { hp: 8, maxHp: 8, ac: 12, attackBonus: 3, damage: "1d6+1", color: "#22c55e" };
   const token: GameToken = {
     id: `${type}-${tokenIdCounter++}`,
     name: type === "monster" ? "Monstre" : "PNJ",
     x: center,
     y: center,
     size: 1,
-    color: type === "monster" ? "#f87171" : "#22c55e",
-    type
+    color: defaults.color,
+    type,
+    hp: defaults.hp,
+    maxHp: defaults.maxHp,
+    ac: defaults.ac,
+    attackBonus: defaults.attackBonus,
+    damage: defaults.damage
   };
   gameState = { ...gameState, tokens: [...gameState.tokens, token] };
   selectToken(token.id);
@@ -281,12 +291,99 @@ function getTokenIdFromEvent(event: PointerEvent) {
   return tokenEl?.dataset.tokenId ?? null;
 }
 
+function updateCombatToggle() {
+  if (!combatToggleBtn) {
+    return;
+  }
+  combatToggleBtn.textContent = combatEnabled ? "Combat: ON" : "Combat: OFF";
+  combatToggleBtn.classList.toggle("active", combatEnabled);
+}
+
+function getDistanceBetweenTokens(attacker: GameToken, target: GameToken) {
+  return chebyshevDistance(attacker, target);
+}
+
+function appendChatMessage(message: string) {
+  appendChat(message);
+}
+
+function setAttackState(attackerId: string | null) {
+  attackState = attackerId ? { attackerId, awaitingTarget: true } : null;
+  hoveredTokenId = null;
+  if (canvasViewport) {
+    if (attackState) {
+      canvasViewport.style.cursor = "crosshair";
+    } else {
+      setActiveTool(activeTool);
+    }
+  }
+  renderGameGrid();
+  if (activeSession) {
+    renderActorsPanel(activeSession);
+  }
+}
+
+function clearMeasure() {
+  if (!isMeasuring && !measureStart && !measureEnd) {
+    measureLocked = false;
+    return;
+  }
+  isMeasuring = false;
+  measureLocked = false;
+  measureStart = null;
+  measureEnd = null;
+  renderGameGrid();
+}
+
+function handleAttackTarget(targetId: string) {
+  if (!attackState || !combatEnabled) {
+    return;
+  }
+  const attacker = getTokenById(attackState.attackerId);
+  const target = getTokenById(targetId);
+  if (!attacker || !target) {
+    setAttackState(null);
+    return;
+  }
+  if (attacker.id === target.id) {
+    appendChatMessage(`${attacker.name} ne peut pas s'attaquer lui-même.`);
+    setAttackState(null);
+    return;
+  }
+  const distance = getDistanceBetweenTokens(attacker, target);
+  if (!isInMeleeRange(attacker, target)) {
+    appendChatMessage(`Hors portée (${distance} cases).`);
+    setAttackState(null);
+    return;
+  }
+  const result = resolveAttack(attacker, target);
+  const rollText = `${result.roll} + ${attacker.attackBonus} = ${result.total}`;
+  const outcome = result.hit ? "HIT" : "MISS";
+  appendChatMessage(
+    `${attacker.name} attaque ${target.name}: d20(${rollText}) vs AC ${target.ac} → ${outcome}`
+  );
+  if (result.hit) {
+    const rolls = result.damageRolls.length ? result.damageRolls.join(", ") : "-";
+    const damageText = `${attacker.damage} [${rolls}]`;
+    gameState = {
+      ...gameState,
+      tokens: gameState.tokens.map((token) =>
+        token.id === target.id ? { ...token, hp: result.remainingHp } : token
+      )
+    };
+    appendChatMessage(`Dégâts: ${damageText} = ${result.damageTotal}. PV ${target.name}: ${result.remainingHp}/${target.maxHp}`);
+    if (activeSession) {
+      renderActorsPanel(activeSession);
+    }
+  }
+  setAttackState(null);
+  renderGameGrid();
+}
+
 function setActiveTool(tool: Tool) {
   activeTool = tool;
   if (tool !== "measure") {
-    isMeasuring = false;
-    measureStart = null;
-    measureEnd = null;
+    clearMeasure();
   }
   if (tool !== "draw") {
     isDrawing = false;
@@ -297,8 +394,9 @@ function setActiveTool(tool: Tool) {
     topBarTool.textContent = `Tool: ${toolLabels[tool]}`;
   }
   if (canvasViewport) {
-    const cursor =
-      tool === "pan"
+    const cursor = attackState?.awaitingTarget
+      ? "crosshair"
+      : tool === "pan"
         ? "grab"
         : tool === "draw"
           ? "crosshair"
@@ -400,8 +498,25 @@ function renderGameGrid() {
     gameState.tokens.forEach((tokenData) => {
       const token = document.createElement("div");
       token.className = "vtt-token";
+      const isKo = tokenData.hp <= 0;
       if (tokenData.id === selectedTokenId) {
         token.classList.add("selected");
+      }
+      if (isKo) {
+        token.classList.add("ko");
+      }
+      if (attackState?.awaitingTarget && tokenData.id !== attackState.attackerId) {
+        const attacker = getTokenById(attackState.attackerId);
+        if (attacker) {
+          const distance = getDistanceBetweenTokens(attacker, tokenData);
+          token.classList.add("vtt-token-target");
+          if (distance > 1) {
+            token.classList.add("out-of-range");
+          }
+        }
+        if (tokenData.id === hoveredTokenId) {
+          token.classList.add("hovered");
+        }
       }
       token.dataset.tokenId = tokenData.id;
       const tokenSize = step * tokenData.size * 0.7;
@@ -410,6 +525,21 @@ function renderGameGrid() {
       token.style.left = `${tokenData.x * step + offsetX + step / 2}px`;
       token.style.top = `${tokenData.y * step + offsetY + step / 2}px`;
       token.style.background = tokenData.color;
+
+      if (combatEnabled) {
+        const label = document.createElement("div");
+        label.className = "vtt-token-label";
+        label.textContent = isKo ? "KO" : `${tokenData.name} ${tokenData.hp}/${tokenData.maxHp}`;
+
+        const hpBar = document.createElement("div");
+        hpBar.className = "vtt-token-hp";
+        const hpFill = document.createElement("span");
+        const ratio = tokenData.maxHp > 0 ? tokenData.hp / tokenData.maxHp : 0;
+        hpFill.style.width = `${Math.max(0, Math.min(1, ratio)) * 100}%`;
+        hpBar.appendChild(hpFill);
+        label.appendChild(hpBar);
+        token.appendChild(label);
+      }
       canvasTokenLayer.appendChild(token);
     });
   }
@@ -469,7 +599,7 @@ function renderGameGrid() {
       Math.abs(measureEnd.x - measureStart.x),
       Math.abs(measureEnd.y - measureStart.y)
     );
-    label.textContent = `${gridDistance} cases`;
+    label.textContent = `${gridDistance} cases (Chebyshev)`;
     label.style.position = "absolute";
     label.style.left = `${(startX + endX) / 2}px`;
     label.style.top = `${(startY + endY) / 2}px`;
@@ -582,6 +712,48 @@ function renderActorsPanel(session: Session) {
   actions.appendChild(addNpcButton);
   actions.appendChild(addMonsterButton);
 
+  const combatActions = document.createElement("div");
+  combatActions.className = "vtt-actors-actions";
+
+  const attackButton = document.createElement("button");
+  attackButton.type = "button";
+  attackButton.textContent = attackState ? "Choose Target..." : "Attack";
+  attackButton.disabled = !combatEnabled || !selectedTokenId || Boolean(attackState);
+  attackButton.addEventListener("click", () => {
+    if (selectedTokenId) {
+      setAttackState(selectedTokenId);
+      const attacker = getTokenById(selectedTokenId);
+      if (attacker) {
+        appendChatMessage(`${attacker.name} choisit une cible...`);
+      }
+    }
+  });
+
+  const healButton = document.createElement("button");
+  healButton.type = "button";
+  healButton.textContent = "Heal +1";
+  healButton.disabled = !selectedTokenId;
+  healButton.addEventListener("click", () => {
+    if (!selectedTokenId) {
+      return;
+    }
+    gameState = {
+      ...gameState,
+      tokens: gameState.tokens.map((token) => {
+        if (token.id !== selectedTokenId) {
+          return token;
+        }
+        const nextHp = Math.min(token.maxHp, token.hp + 1);
+        return { ...token, hp: nextHp };
+      })
+    };
+    renderGameGrid();
+    renderActorsPanel(session);
+  });
+
+  combatActions.appendChild(attackButton);
+  combatActions.appendChild(healButton);
+
   const list = document.createElement("div");
   list.className = "vtt-actors-list";
   gameState.tokens.forEach((token) => {
@@ -589,7 +761,7 @@ function renderActorsPanel(session: Session) {
     row.type = "button";
     row.className = "vtt-actors-token";
     row.classList.toggle("active", token.id === selectedTokenId);
-    row.textContent = `${token.name} (${token.type})`;
+    row.textContent = `${token.name} (${token.type}) • ${token.hp}/${token.maxHp}`;
     row.addEventListener("click", () => {
       selectToken(token.id);
     });
@@ -598,7 +770,15 @@ function renderActorsPanel(session: Session) {
 
   container.appendChild(header);
   container.appendChild(meta);
+  const selectedToken = getTokenById(selectedTokenId);
+  if (selectedToken) {
+    const stats = document.createElement("div");
+    stats.className = "vtt-actors-stats";
+    stats.textContent = `AC ${selectedToken.ac} • Bonus +${selectedToken.attackBonus} • Dmg ${selectedToken.damage}`;
+    container.appendChild(stats);
+  }
   container.appendChild(actions);
+  container.appendChild(combatActions);
   container.appendChild(list);
 }
 
@@ -638,6 +818,7 @@ function setGameView(session: Session) {
     topBarStatus = topBar.status;
     topBarTool = topBar.tool;
     toggleSidebarBtn = topBar.toggleSidebar;
+    combatToggleBtn = topBar.combatToggle;
     backToLobbyBtn = rightSidebar.backButton;
     tabButtons = rightSidebar.tabs;
     tabContents = rightSidebar.contents;
@@ -649,6 +830,21 @@ function setGameView(session: Session) {
       }
       rightSidebarRoot.classList.toggle("vtt-sidebar-collapsed");
     });
+
+    if (combatToggleBtn) {
+      combatToggleBtn.addEventListener("click", () => {
+        combatEnabled = !combatEnabled;
+        if (!combatEnabled) {
+          setAttackState(null);
+        }
+        updateCombatToggle();
+        renderGameGrid();
+        if (activeSession) {
+          renderActorsPanel(activeSession);
+        }
+      });
+      updateCombatToggle();
+    }
 
     setActiveTool(activeTool);
 
@@ -694,6 +890,13 @@ function setGameView(session: Session) {
 
     if (canvasViewport) {
       const handlePointerDown = (event: PointerEvent) => {
+        if (attackState?.awaitingTarget && event.button === 0) {
+          const targetId = getTokenIdFromEvent(event);
+          if (targetId) {
+            handleAttackTarget(targetId);
+          }
+          return;
+        }
         const isPanMode = activeTool === "pan" || isSpacePressed || event.button === 1;
         if (isPanMode) {
           isPanning = true;
@@ -722,13 +925,37 @@ function setGameView(session: Session) {
           return;
         }
         if (activeTool === "measure") {
+          if (event.button === 2) {
+            clearMeasure();
+            return;
+          }
           const coords = getGridCoordinates(event);
           if (coords) {
-            isMeasuring = true;
+            if (!measureStart || !isMeasuring) {
+              isMeasuring = true;
+              measureLocked = false;
+              measureStart = coords;
+              measureEnd = coords;
+              renderGameGrid();
+              return;
+            }
+            if (!measureLocked) {
+              measureEnd = coords;
+              measureLocked = true;
+              renderGameGrid();
+              return;
+            }
             measureStart = coords;
             measureEnd = coords;
+            measureLocked = false;
             renderGameGrid();
-            canvasViewport?.setPointerCapture(event.pointerId);
+          }
+          return;
+        }
+        if (activeTool === "ping" && event.button === 0) {
+          const coords = getWorldCoordinates(event);
+          if (coords) {
+            createPing(coords.x, coords.y);
           }
           return;
         }
@@ -751,6 +978,13 @@ function setGameView(session: Session) {
         }
       };
       const handlePointerMove = (event: PointerEvent) => {
+        if (attackState?.awaitingTarget) {
+          const tokenId = getTokenIdFromEvent(event);
+          if (tokenId !== hoveredTokenId) {
+            hoveredTokenId = tokenId;
+            renderGameGrid();
+          }
+        }
         if (draggingTokenId && activeTool === "token") {
           const coords = getGridCoordinates(event);
           if (coords) {
@@ -764,7 +998,7 @@ function setGameView(session: Session) {
           updateCanvasTransform();
           return;
         }
-        if (isMeasuring && activeTool === "measure") {
+        if (isMeasuring && !measureLocked && activeTool === "measure") {
           const coords = getGridCoordinates(event);
           if (coords) {
             measureEnd = coords;
@@ -792,11 +1026,6 @@ function setGameView(session: Session) {
         }
         if (draggingTokenId) {
           draggingTokenId = null;
-          canvasViewport?.releasePointerCapture(event.pointerId);
-          return;
-        }
-        if (isMeasuring) {
-          isMeasuring = false;
           canvasViewport?.releasePointerCapture(event.pointerId);
           return;
         }
@@ -832,6 +1061,7 @@ function setGameView(session: Session) {
     tabContents.Chat.innerHTML =
       `<div class="vtt-chat-log">Aucun message pour l'instant.</div>` +
       `<input class="vtt-chat-input" placeholder="Message..." />`;
+    vttChatLog = tabContents.Chat.querySelector(".vtt-chat-log");
     tabContents.Items.textContent = "À venir";
     tabContents.Journal.textContent = "À venir";
   }
@@ -973,6 +1203,12 @@ let gridDebugEnabled = false;
 let selectedTokenId: string | null = "player";
 let draggingTokenId: string | null = null;
 let tokenIdCounter = 1;
+let combatEnabled = false;
+let attackState: { attackerId: string; awaitingTarget: boolean } | null = null;
+let hoveredTokenId: string | null = null;
+let measureLocked = false;
+let vttChatLog: HTMLDivElement | null = null;
+let combatToggleBtn: HTMLButtonElement | null = null;
 
 class GameScene extends Phaser.Scene {
   private tokenSprites = new Map<string, Phaser.GameObjects.Arc>();
@@ -1187,6 +1423,12 @@ function appendChat(message: string) {
   line.textContent = message;
   chatLog.appendChild(line);
   chatLog.scrollTop = chatLog.scrollHeight;
+  if (vttChatLog) {
+    const vttLine = document.createElement("div");
+    vttLine.textContent = message;
+    vttChatLog.appendChild(vttLine);
+    vttChatLog.scrollTop = vttChatLog.scrollHeight;
+  }
 }
 
 function attachRoomListeners(activeRoom: Room<GameStateSchema>) {
@@ -1435,6 +1677,14 @@ window.addEventListener("popstate", () => {
 window.addEventListener("keydown", (event) => {
   if (event.code === "Space") {
     isSpacePressed = true;
+  }
+  if (event.key === "Escape") {
+    if (attackState) {
+      setAttackState(null);
+    }
+    if (activeTool === "measure") {
+      clearMeasure();
+    }
   }
 });
 

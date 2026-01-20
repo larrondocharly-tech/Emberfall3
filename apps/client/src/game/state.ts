@@ -24,6 +24,11 @@ export type GameToken = {
   size: number;
   color: string;
   type: TokenType;
+  hp: number;
+  maxHp: number;
+  ac: number;
+  attackBonus: number;
+  damage: string;
 };
 
 export type GameState = {
@@ -43,7 +48,12 @@ export const initialState: GameState = {
       y: 6,
       size: 1,
       color: "#38bdf8",
-      type: "player"
+      type: "player",
+      hp: 12,
+      maxHp: 12,
+      ac: 13,
+      attackBonus: 5,
+      damage: "1d8+3"
     }
   ]
 };
