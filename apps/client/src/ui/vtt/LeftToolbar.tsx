@@ -3,6 +3,7 @@ import type { Tool } from "../../game/tools";
 const TOOL_ICONS: Record<Tool, string> = {
   token: "👤",
   pan: "🖐️",
+  ping: "📍",
   measure: "📏",
   draw: "🖊️"
 };

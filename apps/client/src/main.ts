@@ -12,6 +12,8 @@ import { applyAction } from "./game/reducer";
 import { findSessionById } from "./game/engine";
 import { defaultTool, toolLabels } from "./game/tools";
 import type { Tool } from "./game/tools";
+import type { Scene } from "./game/scenes";
+import { scenes } from "./game/scenes";
 import { createTopBar } from "./ui/vtt/TopBar";
 import { createLeftToolbar } from "./ui/vtt/LeftToolbar";
 import type { SidebarTab } from "./ui/vtt/RightSidebar";
@@ -135,6 +137,91 @@ function clampZoom(value: number) {
   return Math.min(2, Math.max(0.6, value));
 }
 
+const scenePlaceholders = new Map<string, string>();
+
+function createScenePlaceholder(scene: Scene) {
+  const cached = scenePlaceholders.get(scene.id);
+  if (cached) {
+    return cached;
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = 1200;
+  canvas.height = 800;
+  const context = canvas.getContext("2d");
+  if (context) {
+    context.fillStyle = "#0f172a";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#1f2937";
+    context.fillRect(40, 40, canvas.width - 80, canvas.height - 80);
+    context.strokeStyle = "#334155";
+    context.lineWidth = 6;
+    context.strokeRect(40, 40, canvas.width - 80, canvas.height - 80);
+    context.fillStyle = "#f8fafc";
+    context.font = "bold 42px sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(`${scene.name} (placeholder)`, canvas.width / 2, canvas.height / 2);
+  }
+  const dataUrl = canvas.toDataURL("image/png");
+  scenePlaceholders.set(scene.id, dataUrl);
+  return dataUrl;
+}
+
+function applySceneMap(scene: Scene) {
+  if (!canvasMapLayer) {
+    return;
+  }
+  const placeholderUrl = createScenePlaceholder(scene);
+  canvasMapLayer.style.backgroundImage = `url("${placeholderUrl}")`;
+  const image = new Image();
+  image.onload = () => {
+    if (gameState.scene.id !== scene.id) {
+      return;
+    }
+    canvasMapLayer.style.backgroundImage = `url("${scene.mapUrl}")`;
+  };
+  image.onerror = () => {
+    if (gameState.scene.id !== scene.id) {
+      return;
+    }
+    canvasMapLayer.style.backgroundImage = `url("${placeholderUrl}")`;
+  };
+  image.src = scene.mapUrl;
+}
+
+function resetCameraToScene(scene: Scene) {
+  zoomLevel = clampZoom(scene.initialZoom);
+  panOffset = { x: scene.initialPanX, y: scene.initialPanY };
+  updateCanvasTransform();
+}
+
+function applyScene(scene: Scene, options: { resetCamera?: boolean; recenterToken?: boolean } = {}) {
+  const { resetCamera = true, recenterToken = true } = options;
+  gameState = { ...gameState, scene };
+  gridSize = scene.gridSize;
+  if (recenterToken) {
+    tokenPosition = {
+      x: Math.floor(scene.gridSize / 2),
+      y: Math.floor(scene.gridSize / 2)
+    };
+  }
+  isMeasuring = false;
+  measureStart = null;
+  measureEnd = null;
+  isDrawing = false;
+  drawStart = null;
+  drawEnd = null;
+  drawZones = [];
+  if (resetCamera) {
+    resetCameraToScene(scene);
+  }
+  applySceneMap(scene);
+  if (topBarStatus) {
+    topBarStatus.textContent = `Solo · Scene: ${scene.name}`;
+  }
+  renderGameGrid();
+}
+
 function setActiveTool(tool: Tool) {
   activeTool = tool;
   if (tool !== "measure") {
@@ -160,8 +247,9 @@ function setActiveTool(tool: Tool) {
 }
 
 function getGridMetrics() {
-  const cellSize = 48;
-  return { cellSize, step: cellSize };
+  const { pixelsPerGrid, gridOffsetX, gridOffsetY } = gameState.scene;
+  const cellSize = pixelsPerGrid;
+  return { cellSize, step: cellSize, offsetX: gridOffsetX, offsetY: gridOffsetY };
 }
 
 function getGridCoordinates(event: PointerEvent) {
@@ -169,11 +257,11 @@ function getGridCoordinates(event: PointerEvent) {
     return null;
   }
   const rect = canvasViewport.getBoundingClientRect();
-  const { step } = getGridMetrics();
+  const { step, offsetX, offsetY } = getGridMetrics();
   const localX = (event.clientX - rect.left - panOffset.x) / zoomLevel;
   const localY = (event.clientY - rect.top - panOffset.y) / zoomLevel;
-  const gridX = Math.floor(localX / step);
-  const gridY = Math.floor(localY / step);
+  const gridX = Math.floor((localX - offsetX) / step);
+  const gridY = Math.floor((localY - offsetY) / step);
   if (Number.isNaN(gridX) || Number.isNaN(gridY)) {
     return null;
   }
@@ -181,6 +269,33 @@ function getGridCoordinates(event: PointerEvent) {
     x: Math.max(0, Math.min(gridSize - 1, gridX)),
     y: Math.max(0, Math.min(gridSize - 1, gridY))
   };
+}
+
+function getWorldCoordinates(event: PointerEvent) {
+  if (!canvasViewport) {
+    return null;
+  }
+  const rect = canvasViewport.getBoundingClientRect();
+  const localX = (event.clientX - rect.left - panOffset.x) / zoomLevel;
+  const localY = (event.clientY - rect.top - panOffset.y) / zoomLevel;
+  if (!Number.isFinite(localX) || !Number.isFinite(localY)) {
+    return null;
+  }
+  return { x: localX, y: localY };
+}
+
+function createPing(x: number, y: number) {
+  if (!canvasOverlay) {
+    return;
+  }
+  const ping = document.createElement("div");
+  ping.className = "vtt-ping";
+  ping.style.left = `${x}px`;
+  ping.style.top = `${y}px`;
+  canvasOverlay.appendChild(ping);
+  window.setTimeout(() => {
+    ping.remove();
+  }, 1000);
 }
 
 function renderGameGrid() {
@@ -196,7 +311,7 @@ function renderGameGrid() {
     canvasTokenLayer.innerHTML = "";
   }
   canvasOverlay.innerHTML = "";
-  const { step } = getGridMetrics();
+  const { step, offsetX, offsetY } = getGridMetrics();
   const worldSize = gridSize * step;
   canvasWorld.style.width = `${worldSize}px`;
   canvasWorld.style.height = `${worldSize}px`;
@@ -206,7 +321,7 @@ function renderGameGrid() {
     "linear-gradient(to right, rgba(148, 163, 184, 0.9) 1px, transparent 1px)," +
     "linear-gradient(to bottom, rgba(148, 163, 184, 0.9) 1px, transparent 1px)";
   canvasGridLayer.style.backgroundSize = `${step}px ${step}px`;
-  canvasGridLayer.style.backgroundPosition = "0 0";
+  canvasGridLayer.style.backgroundPosition = `${offsetX}px ${offsetY}px`;
 
   if (canvasTokenLayer) {
     const token = document.createElement("div");
@@ -214,16 +329,16 @@ function renderGameGrid() {
     const tokenSize = step * 0.7;
     token.style.width = `${tokenSize}px`;
     token.style.height = `${tokenSize}px`;
-    token.style.left = `${tokenPosition.x * step + step / 2}px`;
-    token.style.top = `${tokenPosition.y * step + step / 2}px`;
+    token.style.left = `${tokenPosition.x * step + offsetX + step / 2}px`;
+    token.style.top = `${tokenPosition.y * step + offsetY + step / 2}px`;
     canvasTokenLayer.appendChild(token);
   }
 
   drawZones.forEach((zone) => {
     const rect = document.createElement("div");
     rect.style.position = "absolute";
-    rect.style.left = `${zone.x * step}px`;
-    rect.style.top = `${zone.y * step}px`;
+    rect.style.left = `${zone.x * step + offsetX}px`;
+    rect.style.top = `${zone.y * step + offsetY}px`;
     rect.style.width = `${zone.width * step - 4}px`;
     rect.style.height = `${zone.height * step - 4}px`;
     rect.style.background = "rgba(56, 189, 248, 0.15)";
@@ -239,8 +354,8 @@ function renderGameGrid() {
     const width = Math.abs(drawEnd.x - drawStart.x) + 1;
     const height = Math.abs(drawEnd.y - drawStart.y) + 1;
     rect.style.position = "absolute";
-    rect.style.left = `${minX * step}px`;
-    rect.style.top = `${minY * step}px`;
+    rect.style.left = `${minX * step + offsetX}px`;
+    rect.style.top = `${minY * step + offsetY}px`;
     rect.style.width = `${width * step - 4}px`;
     rect.style.height = `${height * step - 4}px`;
     rect.style.background = "rgba(148, 163, 184, 0.2)";
@@ -251,10 +366,10 @@ function renderGameGrid() {
 
   if (measureStart && measureEnd) {
     const line = document.createElement("div");
-    const startX = measureStart.x * step + step / 2;
-    const startY = measureStart.y * step + step / 2;
-    const endX = measureEnd.x * step + step / 2;
-    const endY = measureEnd.y * step + step / 2;
+    const startX = measureStart.x * step + offsetX + step / 2;
+    const startY = measureStart.y * step + offsetY + step / 2;
+    const endX = measureEnd.x * step + offsetX + step / 2;
+    const endY = measureEnd.y * step + offsetY + step / 2;
     const dx = endX - startX;
     const dy = endY - startY;
     const length = Math.hypot(dx, dy);
@@ -286,6 +401,67 @@ function renderGameGrid() {
     label.style.color = "#f8fafc";
     canvasOverlay.appendChild(label);
   }
+
+  if (gridDebugEnabled) {
+    const crosshair = document.createElement("div");
+    crosshair.className = "vtt-grid-crosshair";
+    crosshair.style.left = `${offsetX}px`;
+    crosshair.style.top = `${offsetY}px`;
+    const vertical = document.createElement("span");
+    const horizontal = document.createElement("span");
+    crosshair.appendChild(vertical);
+    crosshair.appendChild(horizontal);
+    canvasOverlay.appendChild(crosshair);
+
+    const debugLabel = document.createElement("div");
+    debugLabel.className = "vtt-grid-debug";
+    debugLabel.textContent = `pixelsPerGrid: ${step} · offset: ${offsetX}, ${offsetY}`;
+    canvasOverlay.appendChild(debugLabel);
+  }
+}
+
+function renderScenesPanel() {
+  if (!tabContents) {
+    return;
+  }
+  const container = tabContents.Scenes;
+  container.innerHTML = "";
+
+  const list = document.createElement("div");
+  list.className = "vtt-scenes-panel";
+
+  scenes.forEach((scene) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "vtt-scene-button";
+    button.textContent = scene.name;
+    button.classList.toggle("active", scene.id === gameState.scene.id);
+    button.addEventListener("click", () => {
+      applyScene(scene);
+      renderScenesPanel();
+    });
+    list.appendChild(button);
+  });
+
+  const debugRow = document.createElement("label");
+  debugRow.className = "vtt-scene-debug";
+  const debugInput = document.createElement("input");
+  debugInput.type = "checkbox";
+  debugInput.checked = gridDebugEnabled;
+  debugInput.addEventListener("change", () => {
+    gridDebugEnabled = debugInput.checked;
+    renderGameGrid();
+  });
+  debugRow.appendChild(debugInput);
+  debugRow.appendChild(document.createTextNode(" Debug grille"));
+
+  const meta = document.createElement("div");
+  meta.className = "vtt-scene-meta";
+  meta.textContent = "Sélectionnez une scène pour changer la map.";
+
+  container.appendChild(list);
+  container.appendChild(meta);
+  container.appendChild(debugRow);
 }
 
 function setGameView(session: Session) {
@@ -295,7 +471,7 @@ function setGameView(session: Session) {
   if (!gameView.hasChildNodes()) {
     const topBar = createTopBar();
     const leftToolbar = createLeftToolbar(activeTool, setActiveTool);
-    const canvasView = createCanvasView();
+    const canvasView = createCanvasView({ mapUrl: gameState.scene.mapUrl });
     const rightSidebar = createRightSidebar();
     const bottom = createBottomControls();
 
@@ -321,6 +497,7 @@ function setGameView(session: Session) {
     canvasViewport = canvasView.viewport;
     canvasGridLayer = canvasView.gridLayer;
     canvasTokenLayer = canvasView.tokenLayer;
+    canvasMapLayer = canvasView.mapLayer;
     rightSidebarRoot = rightSidebar.root;
     topBarRoom = topBar.room;
     topBarStatus = topBar.status;
@@ -364,9 +541,7 @@ function setGameView(session: Session) {
         updateCanvasTransform();
       });
       bottomControls.reset.addEventListener("click", () => {
-        zoomLevel = 1;
-        panOffset = { x: 0, y: 0 };
-        updateCanvasTransform();
+        resetCameraToScene(gameState.scene);
       });
       bottomControls.toggleGrid.addEventListener("click", () => {
         gridVisible = !gridVisible;
@@ -410,6 +585,13 @@ function setGameView(session: Session) {
             measureEnd = coords;
             renderGameGrid();
             canvasViewport?.setPointerCapture(event.pointerId);
+          }
+          return;
+        }
+        if (activeTool === "ping" && event.button === 0) {
+          const coords = getWorldCoordinates(event);
+          if (coords) {
+            createPing(coords.x, coords.y);
           }
           return;
         }
@@ -483,17 +665,18 @@ function setGameView(session: Session) {
     topBarRoom.textContent = `Room ${session.id}`;
   }
   if (topBarStatus) {
-    topBarStatus.textContent = "Solo";
+    topBarStatus.textContent = `Solo · Scene: ${gameState.scene.name}`;
   }
-    if (tabContents) {
-      tabContents.Actors.innerHTML = `<strong>${session.player.name}</strong><div>${raceLabel} • ${classLabel}</div>`;
-      tabContents.Chat.innerHTML =
-        `<div class="vtt-chat-log">Aucun message pour l'instant.</div>` +
-        `<input class="vtt-chat-input" placeholder="Message..." />`;
-      tabContents.Items.textContent = "À venir";
-      tabContents.Journal.textContent = "À venir";
-      tabContents.Scenes.textContent = "À venir";
-    }
+  if (tabContents) {
+    tabContents.Actors.innerHTML = `<strong>${session.player.name}</strong><div>${raceLabel} • ${classLabel}</div>`;
+    tabContents.Chat.innerHTML =
+      `<div class="vtt-chat-log">Aucun message pour l'instant.</div>` +
+      `<input class="vtt-chat-input" placeholder="Message..." />`;
+    tabContents.Items.textContent = "À venir";
+    tabContents.Journal.textContent = "À venir";
+  }
+
+  renderScenesPanel();
 
   gameView.style.display = "flex";
   soloRoom.style.display = "none";
@@ -501,8 +684,7 @@ function setGameView(session: Session) {
   hud.style.display = "none";
   chat.style.display = "none";
   combatPanel.style.display = "none";
-  updateCanvasTransform();
-  renderGameGrid();
+  applyScene(gameState.scene);
 }
 
 function navigateToGame(session: Session) {
@@ -589,10 +771,10 @@ let spells: SpellData[] = [];
 let monsters: MonsterData[] = [];
 let lastPointer = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
 let activeSession: Session | null = null;
-const gridSize = 12;
-let tokenPosition = { x: 6, y: 6 };
-let zoomLevel = 1;
-let panOffset = { x: 0, y: 0 };
+let gridSize = gameState.scene.gridSize;
+let tokenPosition = { x: Math.floor(gridSize / 2), y: Math.floor(gridSize / 2) };
+let zoomLevel = gameState.scene.initialZoom;
+let panOffset = { x: gameState.scene.initialPanX, y: gameState.scene.initialPanY };
 let isPanning = false;
 let panStart = { x: 0, y: 0 };
 let canvasWorld: HTMLDivElement | null = null;
@@ -600,6 +782,7 @@ let canvasViewport: HTMLDivElement | null = null;
 let canvasOverlay: HTMLDivElement | null = null;
 let canvasGridLayer: HTMLDivElement | null = null;
 let canvasTokenLayer: HTMLDivElement | null = null;
+let canvasMapLayer: HTMLDivElement | null = null;
 let gamePosition: HTMLDivElement | null = null;
 let rightSidebarRoot: HTMLDivElement | null = null;
 let topBarRoom: HTMLSpanElement | null = null;
@@ -626,6 +809,7 @@ let isDrawing = false;
 let drawStart: { x: number; y: number } | null = null;
 let drawEnd: { x: number; y: number } | null = null;
 let drawZones: Array<{ x: number; y: number; width: number; height: number }> = [];
+let gridDebugEnabled = false;
 
 class GameScene extends Phaser.Scene {
   private tokenSprites = new Map<string, Phaser.GameObjects.Arc>();

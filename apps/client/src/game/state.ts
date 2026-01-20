@@ -1,3 +1,6 @@
+import type { Scene } from "./scenes";
+import { defaultSceneId, getSceneById } from "./scenes";
+
 export type PlayerProfile = {
   name: string;
   raceId: string;
@@ -13,8 +16,10 @@ export type Session = {
 
 export type GameState = {
   session: Session | null;
+  scene: Scene;
 };
 
 export const initialState: GameState = {
-  session: null
+  session: null,
+  scene: getSceneById(defaultSceneId)
 };
