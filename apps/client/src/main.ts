@@ -243,6 +243,7 @@ function selectToken(id: string | null) {
   if (activeSession) {
     renderActorsPanel(activeSession);
   }
+  updateCombatHUD();
 }
 
 function updateTokenPosition(id: string, position: { x: number; y: number }) {
@@ -388,7 +389,7 @@ function updateCombatInfo() {
     vttEndTurnBtn.style.display = combatState.enabled ? "inline-flex" : "none";
   }
   if (!combatState.enabled) {
-    combatInfo.textContent = "Exploration";
+    combatInfo.textContent = combatEnded ? "Combat terminé" : "Exploration";
     return;
   }
   if (!combatState.started) {
@@ -412,6 +413,9 @@ function updateCombatHUD() {
   if (!combatHud) {
     return;
   }
+  if (chat) {
+    chat.style.display = combatState.enabled ? "flex" : "none";
+  }
   if (!combatState.enabled || !combatState.started) {
     combatHud.root.style.display = "none";
     return;
@@ -429,20 +433,50 @@ function updateCombatHUD() {
           : "—";
   combatHud.tokenName.textContent = activeName;
   combatHud.tokenType.textContent = activeType;
-  combatHud.round.textContent = `Round: ${combatState.round}`;
+  combatHud.round.textContent = `Round ${combatState.round}`;
   combatHud.actions.textContent = activeToken
-    ? `Actions restantes: ${activeToken.actionsRemaining}/${activeToken.actionsPerTurn}`
-    : "Actions restantes: —";
+    ? `Actions: ${activeToken.actionsRemaining}/${activeToken.actionsPerTurn}`
+    : "Actions: —";
   combatHud.movement.textContent = activeToken
-    ? `Déplacement restant: ${activeToken.movementRemaining}/${activeToken.movementPerTurn} cases`
-    : "Déplacement restant: —";
+    ? `Déplacement: ${activeToken.movementRemaining}/${activeToken.movementPerTurn} cases`
+    : "Déplacement: —";
+  combatHud.hp.textContent = activeToken ? `PV: ${activeToken.hp}/${activeToken.maxHp}` : "PV: —";
 
   const isPlayerTurn = activeToken?.type === "player";
   const canAct = activeToken ? canTokenAct(activeToken) : false;
+  const movementTotal = activeToken?.movementPerTurn ?? 0;
+  const movementRemaining = activeToken?.movementRemaining ?? 0;
+  const movementExhausted = Boolean(activeToken) && movementRemaining === 0;
+  const movementRatio = movementTotal > 0 ? movementRemaining / movementTotal : 0;
+
+  combatHud.movementValue.textContent = `${movementRemaining}/${movementTotal} cases`;
+  combatHud.movementFill.style.width = `${Math.max(0, Math.min(1, movementRatio)) * 100}%`;
+  combatHud.movementState.textContent = movementExhausted ? "Déplacement épuisé" : "";
+  combatHud.movementState.classList.toggle("active", movementExhausted);
+
+  combatHud.statusBadge.textContent = isPlayerTurn ? "À TON TOUR" : "EN ATTENTE";
+  combatHud.statusBadge.classList.toggle("active", isPlayerTurn);
+  combatHud.statusBadge.classList.toggle("waiting", !isPlayerTurn);
+
   combatHud.attackButton.disabled = !isPlayerTurn || !canAct || Boolean(attackState);
   combatHud.spellsButton.disabled = !isPlayerTurn || !canAct;
   combatHud.itemsButton.disabled = !isPlayerTurn || !canAct;
   combatHud.endTurnButton.disabled = !isPlayerTurn;
+
+  let actionMessage = "";
+  if (!isPlayerTurn) {
+    actionMessage = "EN ATTENTE : tour de l'adversaire.";
+  } else if (!canAct) {
+    actionMessage = "Action indisponible : actions épuisées.";
+  } else if (attackState?.awaitingTarget) {
+    const hoveredToken = hoveredTokenId ? getTokenById(hoveredTokenId) : null;
+    if (hoveredToken && activeToken && !isInMeleeRange(activeToken, hoveredToken)) {
+      actionMessage = `Attaque impossible : hors portée (${getDistanceBetweenTokens(activeToken, hoveredToken)} cases).`;
+    } else {
+      actionMessage = "Choisissez une cible pour attaquer.";
+    }
+  }
+  combatHud.actionStatus.textContent = actionMessage;
 }
 
 function updateChatVisibility() {
@@ -499,6 +533,7 @@ function startCombat() {
   if (!combatState.enabled || combatState.started) {
     return;
   }
+  combatEnded = false;
   gameState = {
     ...gameState,
     tokens: gameState.tokens.map((token) => resetTokenTurnResources(token))
@@ -541,6 +576,7 @@ function resetCombat() {
     activeIndex: 0,
     round: 0
   };
+  combatEnded = true;
   gameState = {
     ...gameState,
     tokens: gameState.tokens.map((token) => resetTokenTurnResources(token))
@@ -552,6 +588,7 @@ function resetCombat() {
   if (activeSession) {
     renderActorsPanel(activeSession);
   }
+  updateCombatHUD();
 }
 
 function endTurn() {
@@ -688,6 +725,7 @@ function setAttackState(attackerId: string | null) {
   if (activeSession) {
     renderActorsPanel(activeSession);
   }
+  updateCombatHUD();
 }
 
 function clearMeasure() {
@@ -1242,6 +1280,13 @@ function setGameView(session: Session) {
     tabContents = rightSidebar.contents;
     bottomControls = bottom;
 
+    if (combatHud && chat) {
+      chat.classList.add("vtt-combat-chat");
+      if (!combatHud.chatSlot.contains(chat)) {
+        combatHud.chatSlot.appendChild(chat);
+      }
+    }
+
     toggleSidebarBtn.addEventListener("click", () => {
       if (!rightSidebarRoot) {
         return;
@@ -1459,6 +1504,7 @@ function setGameView(session: Session) {
           if (tokenId !== hoveredTokenId) {
             hoveredTokenId = tokenId;
             renderGameGrid();
+            updateCombatHUD();
           }
         }
         if (draggingTokenId && activeTool === "token") {
@@ -1710,15 +1756,22 @@ let combatInfo: HTMLSpanElement | null = null;
 let combatHud:
   | {
       root: HTMLDivElement;
+      statusBadge: HTMLSpanElement;
       tokenName: HTMLSpanElement;
       tokenType: HTMLSpanElement;
       round: HTMLSpanElement;
       actions: HTMLSpanElement;
       movement: HTMLSpanElement;
+      hp: HTMLSpanElement;
+      movementValue: HTMLSpanElement;
+      movementFill: HTMLDivElement;
+      movementState: HTMLSpanElement;
+      actionStatus: HTMLSpanElement;
       attackButton: HTMLButtonElement;
       spellsButton: HTMLButtonElement;
       itemsButton: HTMLButtonElement;
       endTurnButton: HTMLButtonElement;
+      chatSlot: HTMLDivElement;
     }
   | null = null;
 let combatState = {
@@ -1728,6 +1781,7 @@ let combatState = {
   activeIndex: 0,
   round: 0
 };
+let combatEnded = false;
 let isAITurnRunning = false;
 
 class GameScene extends Phaser.Scene {
