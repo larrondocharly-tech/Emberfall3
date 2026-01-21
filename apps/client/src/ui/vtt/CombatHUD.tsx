@@ -15,6 +15,8 @@ export type CombatHudElements = {
   spellsButton: HTMLButtonElement;
   itemsButton: HTMLButtonElement;
   endTurnButton: HTMLButtonElement;
+  spellMenu: HTMLDivElement;
+  spellList: HTMLDivElement;
   chatSlot: HTMLDivElement;
 };
 
@@ -59,7 +61,7 @@ export function createCombatHUD(): CombatHudElements {
 
   const actionLabel = document.createElement("span");
   actionLabel.className = "vtt-combat-hud-label";
-  actionLabel.textContent = "PA";
+  actionLabel.textContent = "Actions";
 
   const actionPips = document.createElement("div");
   actionPips.className = "vtt-combat-hud-pips";
@@ -80,7 +82,7 @@ export function createCombatHUD(): CombatHudElements {
 
   const movementLabel = document.createElement("span");
   movementLabel.className = "vtt-combat-hud-label";
-  movementLabel.textContent = "PM";
+  movementLabel.textContent = "Déplacement";
 
   const movementPips = document.createElement("div");
   movementPips.className = "vtt-combat-hud-pips";
@@ -135,6 +137,19 @@ export function createCombatHUD(): CombatHudElements {
   right.appendChild(endTurnButton);
   right.appendChild(logsButton);
 
+  const spellMenu = document.createElement("div");
+  spellMenu.className = "vtt-combat-hud-spell-menu";
+
+  const spellMenuTitle = document.createElement("div");
+  spellMenuTitle.className = "vtt-combat-hud-spell-menu-title";
+  spellMenuTitle.textContent = "Grimoire";
+
+  const spellList = document.createElement("div");
+  spellList.className = "vtt-combat-hud-spell-list";
+
+  spellMenu.appendChild(spellMenuTitle);
+  spellMenu.appendChild(spellList);
+
   const chatPanel = document.createElement("div");
   chatPanel.className = "vtt-combat-hud-logs";
 
@@ -183,6 +198,7 @@ export function createCombatHUD(): CombatHudElements {
   root.appendChild(left);
   root.appendChild(center);
   root.appendChild(right);
+  root.appendChild(spellMenu);
   root.appendChild(chatPanel);
 
   return {
@@ -202,6 +218,8 @@ export function createCombatHUD(): CombatHudElements {
     spellsButton,
     itemsButton,
     endTurnButton,
+    spellMenu,
+    spellList,
     chatSlot
   };
 }
