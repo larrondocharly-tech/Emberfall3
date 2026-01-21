@@ -564,15 +564,38 @@ function requestSimpleAction(kind: "spells" | "items") {
     return;
   }
   if (kind === "spells") {
-    const currentMode = modeMachine.getMode();
-    if (currentMode === "spellMenu" || currentMode === "spellTarget") {
-      modeMachine.setMode("idle");
-      return;
-    }
-    modeMachine.setMode("spellMenu");
+    toggleSpellMenu();
     return;
   }
   appendChatMessage("Objets: à venir.");
+}
+
+function openSpellMenu() {
+  if (!combatHud) {
+    return;
+  }
+  isSpellMenuOpen = true;
+  combatHud.spellMenu.classList.add("open");
+}
+
+function closeSpellMenu(options?: { preserveMode?: boolean }) {
+  if (!combatHud) {
+    return;
+  }
+  isSpellMenuOpen = false;
+  combatHud.spellMenu.classList.remove("open");
+  if (!options?.preserveMode && modeMachine.getMode() === "spellMenu") {
+    modeMachine.setMode("idle");
+  }
+}
+
+function toggleSpellMenu() {
+  if (isSpellMenuOpen) {
+    closeSpellMenu();
+    return;
+  }
+  modeMachine.setMode("spellMenu");
+  openSpellMenu();
 }
 
 function startCombat() {
@@ -1051,9 +1074,7 @@ function renderSpellMenu() {
       selectedSpellId = spell.id;
       updateSpellRange(caster, spell.range);
       modeMachine.setMode("spellTarget");
-      if (combatHud) {
-        combatHud.spellMenu.classList.remove("open");
-      }
+      closeSpellMenu({ preserveMode: true });
     });
     combatHud.spellList.appendChild(button);
   });
@@ -1241,9 +1262,7 @@ function clearRangeOverlays() {
 
 function clearSpellSelection() {
   selectedSpellId = null;
-  if (combatHud) {
-    combatHud.spellMenu.classList.remove("open");
-  }
+  closeSpellMenu({ preserveMode: true });
 }
 
 function handleModeChange(next: "idle" | "movePreview" | "attackSelect" | "spellMenu" | "spellTarget") {
@@ -1260,8 +1279,10 @@ function handleModeChange(next: "idle" | "movePreview" | "attackSelect" | "spell
   if (next !== "spellMenu" && next !== "spellTarget") {
     clearSpellSelection();
   }
-  if (next === "spellMenu" && combatHud) {
-    combatHud.spellMenu.classList.add("open");
+  if (next === "spellMenu") {
+    openSpellMenu();
+  } else if (isSpellMenuOpen) {
+    closeSpellMenu({ preserveMode: true });
   }
   if (next === "idle") {
     hoveredTokenId = null;
@@ -1850,6 +1871,28 @@ function setGameView(session: Session) {
         endTurn();
       });
       renderSpellMenu();
+      if (!spellMenuListenersReady) {
+        spellMenuListenersReady = true;
+        combatHud.spellMenu.addEventListener("pointerdown", (event) => {
+          event.stopPropagation();
+        });
+        combatHud.spellsButton.addEventListener("pointerdown", (event) => {
+          event.stopPropagation();
+        });
+        document.addEventListener("pointerdown", (event) => {
+          if (!isSpellMenuOpen || !combatHud) {
+            return;
+          }
+          const target = event.target as Node | null;
+          if (!target) {
+            return;
+          }
+          if (combatHud.spellMenu.contains(target) || combatHud.spellsButton.contains(target)) {
+            return;
+          }
+          closeSpellMenu();
+        });
+      }
     }
 
     setActiveTool(activeTool);
@@ -2352,6 +2395,8 @@ let movementPreviewPath: Array<{ x: number; y: number }> = [];
 let attackRangeCells = new Set<string>();
 let spellRangeCells = new Set<string>();
 let selectedSpellId: SpellId | null = null;
+let isSpellMenuOpen = false;
+let spellMenuListenersReady = false;
 const surfaceStore = createSurfaceStore();
 const statusStore = createStatusStore();
 const modeMachine = createModeMachine("idle", handleModeChange);
@@ -2843,6 +2888,9 @@ window.addEventListener("keydown", (event) => {
     isSpacePressed = true;
   }
   if (event.key === "Escape") {
+    if (isSpellMenuOpen) {
+      closeSpellMenu();
+    }
     if (attackState || modeMachine.getMode() !== "idle") {
       modeMachine.setMode("idle");
     }
