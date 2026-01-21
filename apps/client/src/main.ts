@@ -955,9 +955,9 @@ function renderGameGrid() {
   if (!gamePosition || !canvasWorld) {
     return;
   }
-  const activeToken = getTokenById(selectedTokenId) ?? getTokenById("player");
-  if (activeToken) {
-    gamePosition.textContent = `Position: (${activeToken.x}, ${activeToken.y})`;
+  const currentActiveToken = getTokenById(selectedTokenId) ?? getTokenById("player");
+  if (currentActiveToken) {
+    gamePosition.textContent = `Position: (${currentActiveToken.x}, ${currentActiveToken.y})`;
   }
   if (!canvasGridLayer || !canvasOverlay) {
     return;
