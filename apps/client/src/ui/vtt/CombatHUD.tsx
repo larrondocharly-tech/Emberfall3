@@ -106,37 +106,79 @@ export function createCombatHUD(): CombatHudElements {
 
   const attackButton = document.createElement("button");
   attackButton.type = "button";
-  attackButton.textContent = "Attaquer";
+  attackButton.className = "vtt-combat-hud-button";
+  attackButton.innerHTML = `<span class="vtt-combat-hud-button-icon">⚔️</span><span class="vtt-combat-hud-button-text">Attaquer</span>`;
 
   const spellsButton = document.createElement("button");
   spellsButton.type = "button";
-  spellsButton.textContent = "Sorts";
+  spellsButton.className = "vtt-combat-hud-button";
+  spellsButton.innerHTML = `<span class="vtt-combat-hud-button-icon">✨</span><span class="vtt-combat-hud-button-text">Sorts</span>`;
 
   const itemsButton = document.createElement("button");
   itemsButton.type = "button";
-  itemsButton.textContent = "Objets";
+  itemsButton.className = "vtt-combat-hud-button";
+  itemsButton.innerHTML = `<span class="vtt-combat-hud-button-icon">🎒</span><span class="vtt-combat-hud-button-text">Objets</span>`;
 
   const endTurnButton = document.createElement("button");
   endTurnButton.type = "button";
-  endTurnButton.textContent = "Passer";
+  endTurnButton.className = "vtt-combat-hud-button";
+  endTurnButton.innerHTML = `<span class="vtt-combat-hud-button-icon">⏭️</span><span class="vtt-combat-hud-button-text">Passer</span>`;
+
+  const logsButton = document.createElement("button");
+  logsButton.type = "button";
+  logsButton.className = "vtt-combat-hud-button vtt-combat-hud-logs-toggle";
+  logsButton.innerHTML = `<span class="vtt-combat-hud-button-icon">📜</span><span class="vtt-combat-hud-button-text">Logs</span>`;
 
   right.appendChild(attackButton);
   right.appendChild(spellsButton);
   right.appendChild(itemsButton);
   right.appendChild(endTurnButton);
+  right.appendChild(logsButton);
 
   const chatPanel = document.createElement("div");
-  chatPanel.className = "vtt-combat-hud-chat";
+  chatPanel.className = "vtt-combat-hud-logs";
 
   const chatHeader = document.createElement("div");
-  chatHeader.className = "vtt-combat-hud-chat-header";
-  chatHeader.textContent = "Chat de combat";
+  chatHeader.className = "vtt-combat-hud-logs-header";
+
+  const chatTitle = document.createElement("span");
+  chatTitle.textContent = "Chat de combat";
+
+  const chatClose = document.createElement("button");
+  chatClose.type = "button";
+  chatClose.className = "vtt-combat-hud-logs-close";
+  chatClose.textContent = "✕";
+
+  chatHeader.appendChild(chatTitle);
+  chatHeader.appendChild(chatClose);
 
   const chatSlot = document.createElement("div");
-  chatSlot.className = "vtt-combat-hud-chat-slot";
+  chatSlot.className = "vtt-combat-hud-logs-slot";
 
   chatPanel.appendChild(chatHeader);
   chatPanel.appendChild(chatSlot);
+
+  logsButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    chatPanel.classList.toggle("open");
+  });
+  chatClose.addEventListener("click", (event) => {
+    event.stopPropagation();
+    chatPanel.classList.remove("open");
+  });
+  document.addEventListener("click", (event) => {
+    if (!chatPanel.classList.contains("open")) {
+      return;
+    }
+    const target = event.target as Node | null;
+    if (!target) {
+      return;
+    }
+    if (chatPanel.contains(target) || logsButton.contains(target)) {
+      return;
+    }
+    chatPanel.classList.remove("open");
+  });
 
   root.appendChild(left);
   root.appendChild(center);
