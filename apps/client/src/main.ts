@@ -317,7 +317,7 @@ function getDistanceBetweenTokens(attacker: GameToken, target: GameToken) {
 }
 
 function getMoveCost(from: { x: number; y: number }, to: { x: number; y: number }) {
-  return chebyshevDistance(from, to);
+  return Math.abs(from.x - to.x) + Math.abs(from.y - to.y);
 }
 
 function appendChatMessage(message: string) {
