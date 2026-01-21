@@ -25,23 +25,9 @@ export function createCombatHUD(): CombatHudElements {
   const left = document.createElement("div");
   left.className = "vtt-combat-hud-left";
 
-  const statusBadge = document.createElement("span");
-  statusBadge.className = "vtt-combat-hud-status";
-  statusBadge.textContent = "EN ATTENTE";
-
-  const statusBadge = document.createElement("span");
-  statusBadge.className = "vtt-combat-hud-status";
-  statusBadge.textContent = "EN ATTENTE";
-
-  const round = document.createElement("span");
-  round.className = "vtt-combat-hud-round";
-  round.textContent = "Round —";
-
-  header.appendChild(statusBadge);
-  header.appendChild(round);
-
-  const identity = document.createElement("div");
-  identity.className = "vtt-combat-hud-identity";
+  const statusBadgeEl = document.createElement("span");
+  statusBadgeEl.className = "vtt-combat-hud-status";
+  statusBadgeEl.textContent = "EN ATTENTE";
 
   const tokenName = document.createElement("span");
   tokenName.className = "vtt-combat-hud-name";
@@ -55,15 +41,15 @@ export function createCombatHUD(): CombatHudElements {
   hp.className = "vtt-combat-hud-hp";
   hp.textContent = "PV: —";
 
-  const round = document.createElement("span");
-  round.className = "vtt-combat-hud-round";
-  round.textContent = "Round —";
+  const roundEl = document.createElement("span");
+  roundEl.className = "vtt-combat-hud-round";
+  roundEl.textContent = "Round —";
 
-  left.appendChild(statusBadge);
+  left.appendChild(statusBadgeEl);
   left.appendChild(tokenName);
   left.appendChild(tokenType);
   left.appendChild(hp);
-  left.appendChild(round);
+  left.appendChild(roundEl);
 
   const center = document.createElement("div");
   center.className = "vtt-combat-hud-center";
@@ -159,10 +145,10 @@ export function createCombatHUD(): CombatHudElements {
 
   return {
     root,
-    statusBadge,
+    statusBadge: statusBadgeEl,
     tokenName,
     tokenType,
-    round,
+    round: roundEl,
     hp,
     actionPips,
     actionValue,
