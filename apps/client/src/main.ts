@@ -389,6 +389,12 @@ function getActiveCombatToken() {
   return getTokenById(tokenId);
 }
 
+function getCombatTurnState() {
+  const activeToken = getActiveCombatToken();
+  const isPlayerTurn = activeToken?.type === "player";
+  return { activeToken, isPlayerTurn };
+}
+
 function updateCombatInfo() {
   if (!combatInfo) {
     return;
@@ -407,11 +413,11 @@ function updateCombatInfo() {
     }
     return;
   }
-  const activeToken = getActiveCombatToken();
-  const activeName = activeToken?.name ?? "—";
+  const combatTurnState = getCombatTurnState();
+  const activeName = combatTurnState.activeToken?.name ?? "—";
   combatInfo.textContent = `Round ${combatState.round} · Tour de ${activeName}`;
   if (vttEndTurnBtn) {
-    vttEndTurnBtn.disabled = activeToken?.type !== "player";
+    vttEndTurnBtn.disabled = combatTurnState.activeToken?.type !== "player";
   }
   updateCombatHUD();
   updateChatVisibility();
@@ -448,27 +454,28 @@ function updateCombatHUD() {
     return;
   }
   combatHud.root.style.display = "grid";
-  const activeToken = getActiveCombatToken();
-  const activeName = activeToken?.name ?? "—";
+  const combatTurnState = getCombatTurnState();
+  const activeName = combatTurnState.activeToken?.name ?? "—";
   const activeType =
-    activeToken?.type === "player"
+    combatTurnState.activeToken?.type === "player"
       ? "Player"
-      : activeToken?.type === "npc"
+      : combatTurnState.activeToken?.type === "npc"
         ? "PNJ"
-        : activeToken?.type === "monster"
+        : combatTurnState.activeToken?.type === "monster"
           ? "Monstre"
           : "—";
   combatHud.tokenName.textContent = activeName;
   combatHud.tokenType.textContent = activeType;
   combatHud.round.textContent = `Round ${combatState.round || "—"}`;
-  combatHud.hp.textContent = activeToken ? `PV: ${activeToken.hp}/${activeToken.maxHp}` : "PV: —";
+  combatHud.hp.textContent = combatTurnState.activeToken
+    ? `PV: ${combatTurnState.activeToken.hp}/${combatTurnState.activeToken.maxHp}`
+    : "PV: —";
 
-  const isPlayerTurn = activeToken?.type === "player";
-  const canAct = activeToken ? canTokenAct(activeToken) : false;
-  const actionTotal = activeToken?.actionsPerTurn ?? 0;
-  const actionRemaining = activeToken?.actionsRemaining ?? 0;
-  const movementTotal = activeToken?.movementPerTurn ?? 0;
-  const movementRemaining = activeToken?.movementRemaining ?? 0;
+  const canAct = combatTurnState.activeToken ? canTokenAct(combatTurnState.activeToken) : false;
+  const actionTotal = combatTurnState.activeToken?.actionsPerTurn ?? 0;
+  const actionRemaining = combatTurnState.activeToken?.actionsRemaining ?? 0;
+  const movementTotal = combatTurnState.activeToken?.movementPerTurn ?? 0;
+  const movementRemaining = combatTurnState.activeToken?.movementRemaining ?? 0;
 
   renderPips(combatHud.actionPips, actionTotal, actionRemaining);
   renderPips(combatHud.movementPips, movementTotal, movementRemaining);
@@ -481,16 +488,16 @@ function updateCombatHUD() {
   combatHud.movementNotice.textContent =
     movementTotal > 0 && movementRemaining === 0 ? "Déplacement épuisé" : "";
 
-  combatHud.statusBadge.textContent = isPlayerTurn ? "À TON TOUR" : "EN ATTENTE";
-  combatHud.statusBadge.classList.toggle("active", isPlayerTurn);
-  combatHud.statusBadge.classList.toggle("waiting", !isPlayerTurn);
+  combatHud.statusBadge.textContent = combatTurnState.isPlayerTurn ? "À TON TOUR" : "EN ATTENTE";
+  combatHud.statusBadge.classList.toggle("active", combatTurnState.isPlayerTurn);
+  combatHud.statusBadge.classList.toggle("waiting", !combatTurnState.isPlayerTurn);
 
-  combatHud.attackButton.disabled = !isPlayerTurn || !canAct || Boolean(attackState);
-  combatHud.spellsButton.disabled = !isPlayerTurn || !canAct;
-  combatHud.itemsButton.disabled = !isPlayerTurn || !canAct;
-  combatHud.endTurnButton.disabled = !isPlayerTurn;
+  combatHud.attackButton.disabled = !combatTurnState.isPlayerTurn || !canAct || Boolean(attackState);
+  combatHud.spellsButton.disabled = !combatTurnState.isPlayerTurn || !canAct;
+  combatHud.itemsButton.disabled = !combatTurnState.isPlayerTurn || !canAct;
+  combatHud.endTurnButton.disabled = !combatTurnState.isPlayerTurn;
 
-  if (!isPlayerTurn) {
+  if (!combatTurnState.isPlayerTurn) {
     hoveredGridCell = null;
   }
 }
@@ -525,19 +532,19 @@ function requestAttack(attackerId: string) {
 }
 
 function requestSimpleAction(kind: "spells" | "items") {
-  const activeToken = getActiveCombatToken();
-  if (!combatState.enabled || !combatState.started || !activeToken) {
+  const combatTurnState = getCombatTurnState();
+  if (!combatState.enabled || !combatState.started || !combatTurnState.activeToken) {
     return;
   }
-  if (activeToken.type !== "player") {
+  if (combatTurnState.activeToken.type !== "player") {
     appendChatMessage("Ce n'est pas votre tour.");
     return;
   }
-  if (!canTokenAct(activeToken)) {
+  if (!canTokenAct(combatTurnState.activeToken)) {
     appendChatMessage("Action déjà utilisée.");
     return;
   }
-  spendTokenAction(activeToken.id);
+  spendTokenAction(combatTurnState.activeToken.id);
   appendChatMessage(kind === "spells" ? "Sorts: à venir." : "Objets: à venir.");
   updateCombatHUD();
   if (activeSession) {
@@ -571,9 +578,9 @@ function startCombat() {
   appendChatMessage(
     `Ordre d'initiative: ${rolls.map((roll) => `${roll.name}(${roll.total})`).join(", ")}.`
   );
-  const activeToken = getActiveCombatToken();
-  if (activeToken) {
-    appendChatMessage(`Tour ${combatState.round}: ${activeToken.name}.`);
+  const combatTurnState = getCombatTurnState();
+  if (combatTurnState.activeToken) {
+    appendChatMessage(`Tour ${combatState.round}: ${combatTurnState.activeToken.name}.`);
   }
   updateCombatInfo();
   if (activeSession) {
@@ -631,9 +638,9 @@ function endTurn() {
   if (nextTokenId) {
     updateTokenState(nextTokenId, (token) => resetTokenTurnResources(token));
   }
-  const activeToken = getActiveCombatToken();
-  if (activeToken) {
-    appendChatMessage(`Tour: ${activeToken.name}.`);
+  const combatTurnState = getCombatTurnState();
+  if (combatTurnState.activeToken) {
+    appendChatMessage(`Tour: ${combatTurnState.activeToken.name}.`);
   }
   updateCombatInfo();
   if (activeSession) {
@@ -647,8 +654,8 @@ function triggerEnemyTurnIfNeeded() {
   if (!combatState.enabled || !combatState.started) {
     return;
   }
-  const activeToken = getActiveCombatToken();
-  if (!activeToken || activeToken.type === "player") {
+  const combatTurnState = getCombatTurnState();
+  if (!combatTurnState.activeToken || combatTurnState.activeToken.type === "player") {
     return;
   }
   if (isAITurnRunning) {
@@ -656,7 +663,7 @@ function triggerEnemyTurnIfNeeded() {
   }
   isAITurnRunning = true;
   window.setTimeout(() => {
-    runEnemyTurn(activeToken.id);
+    runEnemyTurn(combatTurnState.activeToken.id);
   }, 300);
 }
 
@@ -978,11 +985,16 @@ function renderGameGrid() {
   canvasWorld.style.width = `${worldSize}px`;
   canvasWorld.style.height = `${worldSize}px`;
 
-  const activeToken = getActiveCombatToken();
-  const isPlayerTurn = activeToken?.type === "player";
+  const combatTurnState = getCombatTurnState();
   const hoveredCell = hoveredGridCell;
-  if (combatState.enabled && combatState.started && activeToken && isPlayerTurn && hoveredCell) {
-    const remainingMoves = activeToken.movementRemaining ?? 0;
+  if (
+    combatState.enabled &&
+    combatState.started &&
+    combatTurnState.activeToken &&
+    combatTurnState.isPlayerTurn &&
+    hoveredCell
+  ) {
+    const remainingMoves = combatTurnState.activeToken.movementRemaining ?? 0;
     const reachable = getReachableCells(hoveredCell, remainingMoves);
     reachable.forEach((key) => {
       const [xStr, yStr] = key.split(",");
@@ -1001,7 +1013,7 @@ function renderGameGrid() {
     });
 
     if (reachable.has(`${hoveredCell.x},${hoveredCell.y}`)) {
-      const path = getPathCells(activeToken, hoveredCell);
+      const path = getPathCells(combatTurnState.activeToken, hoveredCell);
       path.forEach((point) => {
         const cell = document.createElement("div");
         cell.className = "vtt-movement-cell path";
@@ -1422,9 +1434,9 @@ function setGameView(session: Session) {
     }
     if (combatHud) {
       combatHud.attackButton.addEventListener("click", () => {
-        const activeToken = getActiveCombatToken();
-        if (activeToken) {
-          requestAttack(activeToken.id);
+        const combatTurnState = getCombatTurnState();
+        if (combatTurnState.activeToken) {
+          requestAttack(combatTurnState.activeToken.id);
         }
       });
       combatHud.spellsButton.addEventListener("click", () => {
@@ -1618,6 +1630,27 @@ function setGameView(session: Session) {
             renderGameGrid();
             updateCombatHUD();
           }
+        }
+        const combatTurnState = getCombatTurnState();
+        if (
+          combatState.enabled &&
+          combatState.started &&
+          combatTurnState.activeToken &&
+          combatTurnState.isPlayerTurn
+        ) {
+          const coords = getGridCoordinates(event);
+          if (coords) {
+            if (!hoveredGridCell || hoveredGridCell.x !== coords.x || hoveredGridCell.y !== coords.y) {
+              hoveredGridCell = coords;
+              renderGameGrid();
+            }
+          } else if (hoveredGridCell) {
+            hoveredGridCell = null;
+            renderGameGrid();
+          }
+        } else if (hoveredGridCell) {
+          hoveredGridCell = null;
+          renderGameGrid();
         }
         const activeToken = getActiveCombatToken();
         const isPlayerTurn = activeToken?.type === "player";
