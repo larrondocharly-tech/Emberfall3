@@ -488,6 +488,21 @@ function updateCombatHUD() {
   combatHud.spellsButton.disabled = !isPlayerTurn || !canAct;
   combatHud.itemsButton.disabled = !isPlayerTurn || !canAct;
   combatHud.endTurnButton.disabled = !isPlayerTurn;
+
+  let actionMessage = "";
+  if (!isPlayerTurn) {
+    actionMessage = "EN ATTENTE : tour de l'adversaire.";
+  } else if (!canAct) {
+    actionMessage = "Action indisponible : actions épuisées.";
+  } else if (attackState?.awaitingTarget) {
+    const hoveredToken = hoveredTokenId ? getTokenById(hoveredTokenId) : null;
+    if (hoveredToken && activeToken && !isInMeleeRange(activeToken, hoveredToken)) {
+      actionMessage = `Attaque impossible : hors portée (${getDistanceBetweenTokens(activeToken, hoveredToken)} cases).`;
+    } else {
+      actionMessage = "Choisissez une cible pour attaquer.";
+    }
+  }
+  combatHud.actionStatus.textContent = actionMessage;
 }
 
 function updateChatVisibility() {
