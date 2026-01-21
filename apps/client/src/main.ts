@@ -1669,23 +1669,6 @@ function setGameView(session: Session) {
           hoveredGridCell = null;
           renderGameGrid();
         }
-        const activeToken = getActiveCombatToken();
-        const isPlayerTurn = activeToken?.type === "player";
-        if (combatState.enabled && combatState.started && activeToken && isPlayerTurn) {
-          const coords = getGridCoordinates(event);
-          if (coords) {
-            if (!hoveredGridCell || hoveredGridCell.x !== coords.x || hoveredGridCell.y !== coords.y) {
-              hoveredGridCell = coords;
-              renderGameGrid();
-            }
-          } else if (hoveredGridCell) {
-            hoveredGridCell = null;
-            renderGameGrid();
-          }
-        } else if (hoveredGridCell) {
-          hoveredGridCell = null;
-          renderGameGrid();
-        }
         if (draggingTokenId && activeTool === "token") {
           const coords = getGridCoordinates(event);
           if (coords) {
