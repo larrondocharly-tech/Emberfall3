@@ -571,19 +571,19 @@ function requestSimpleAction(kind: "spells" | "items") {
 }
 
 function openSpellMenu() {
-  if (!combatHud) {
+  if (!spellMenuRef) {
     return;
   }
   isSpellMenuOpen = true;
-  combatHud.spellMenu.classList.add("open");
+  spellMenuRef.classList.add("open");
 }
 
 function closeSpellMenu(options?: { preserveMode?: boolean }) {
-  if (!combatHud) {
+  if (!spellMenuRef) {
     return;
   }
   isSpellMenuOpen = false;
-  combatHud.spellMenu.classList.remove("open");
+  spellMenuRef.classList.remove("open");
   if (!options?.preserveMode && modeMachine.getMode() === "spellMenu") {
     modeMachine.setMode("idle");
   }
@@ -1065,6 +1065,10 @@ function renderSpellMenu() {
     const button = document.createElement("button");
     button.type = "button";
     button.innerHTML = `<span>${spell.name}</span><span>PO ${spell.range}</span>`;
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
     button.addEventListener("click", () => {
       const caster = getSpellCaster();
       if (!caster) {
@@ -1871,27 +1875,34 @@ function setGameView(session: Session) {
         endTurn();
       });
       renderSpellMenu();
+      spellMenuRef = combatHud.spellMenu;
+      spellButtonRef = combatHud.spellsButton;
       if (!spellMenuListenersReady) {
         spellMenuListenersReady = true;
         combatHud.spellMenu.addEventListener("pointerdown", (event) => {
+          event.preventDefault();
           event.stopPropagation();
         });
         combatHud.spellsButton.addEventListener("pointerdown", (event) => {
           event.stopPropagation();
         });
-        document.addEventListener("pointerdown", (event) => {
-          if (!isSpellMenuOpen || !combatHud) {
-            return;
-          }
-          const target = event.target as Node | null;
-          if (!target) {
-            return;
-          }
-          if (combatHud.spellMenu.contains(target) || combatHud.spellsButton.contains(target)) {
-            return;
-          }
-          closeSpellMenu();
-        });
+        document.addEventListener(
+          "pointerdown",
+          (event) => {
+            if (!isSpellMenuOpen || !spellMenuRef || !spellButtonRef) {
+              return;
+            }
+            const target = event.target as Node | null;
+            if (!target) {
+              return;
+            }
+            if (spellMenuRef.contains(target) || spellButtonRef.contains(target)) {
+              return;
+            }
+            closeSpellMenu();
+          },
+          true
+        );
       }
     }
 
@@ -2397,6 +2408,8 @@ let spellRangeCells = new Set<string>();
 let selectedSpellId: SpellId | null = null;
 let isSpellMenuOpen = false;
 let spellMenuListenersReady = false;
+let spellMenuRef: HTMLDivElement | null = null;
+let spellButtonRef: HTMLButtonElement | null = null;
 const surfaceStore = createSurfaceStore();
 const statusStore = createStatusStore();
 const modeMachine = createModeMachine("idle", handleModeChange);
