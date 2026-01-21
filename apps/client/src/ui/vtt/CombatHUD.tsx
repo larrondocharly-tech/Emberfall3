@@ -29,6 +29,20 @@ export function createCombatHUD(): CombatHudElements {
   statusBadge.className = "vtt-combat-hud-status";
   statusBadge.textContent = "EN ATTENTE";
 
+  const statusBadge = document.createElement("span");
+  statusBadge.className = "vtt-combat-hud-status";
+  statusBadge.textContent = "EN ATTENTE";
+
+  const round = document.createElement("span");
+  round.className = "vtt-combat-hud-round";
+  round.textContent = "Round —";
+
+  header.appendChild(statusBadge);
+  header.appendChild(round);
+
+  const identity = document.createElement("div");
+  identity.className = "vtt-combat-hud-identity";
+
   const tokenName = document.createElement("span");
   tokenName.className = "vtt-combat-hud-name";
   tokenName.textContent = "—";
