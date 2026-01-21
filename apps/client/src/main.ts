@@ -444,6 +444,7 @@ function updateCombatHUD() {
   }
   if (!combatState.enabled) {
     combatHud.root.style.display = "none";
+    hoveredGridCell = null;
     return;
   }
   combatHud.root.style.display = "grid";
@@ -489,20 +490,9 @@ function updateCombatHUD() {
   combatHud.itemsButton.disabled = !isPlayerTurn || !canAct;
   combatHud.endTurnButton.disabled = !isPlayerTurn;
 
-  let actionMessage = "";
   if (!isPlayerTurn) {
-    actionMessage = "EN ATTENTE : tour de l'adversaire.";
-  } else if (!canAct) {
-    actionMessage = "Action indisponible : actions épuisées.";
-  } else if (attackState?.awaitingTarget) {
-    const hoveredToken = hoveredTokenId ? getTokenById(hoveredTokenId) : null;
-    if (hoveredToken && activeToken && !isInMeleeRange(activeToken, hoveredToken)) {
-      actionMessage = `Attaque impossible : hors portée (${getDistanceBetweenTokens(activeToken, hoveredToken)} cases).`;
-    } else {
-      actionMessage = "Choisissez une cible pour attaquer.";
-    }
+    hoveredGridCell = null;
   }
-  combatHud.actionStatus.textContent = actionMessage;
 }
 
 function updateChatVisibility() {
@@ -911,6 +901,56 @@ function createPing(x: number, y: number) {
   }, 1000);
 }
 
+function getReachableCells(origin: { x: number; y: number }, range: number) {
+  const reachable = new Set<string>();
+  if (range <= 0) {
+    return reachable;
+  }
+  for (let dx = -range; dx <= range; dx += 1) {
+    for (let dy = -range; dy <= range; dy += 1) {
+      if (Math.abs(dx) + Math.abs(dy) > range) {
+        continue;
+      }
+      const x = origin.x + dx;
+      const y = origin.y + dy;
+      if (x < 0 || y < 0 || x >= gridSize || y >= gridSize) {
+        continue;
+      }
+      reachable.add(`${x},${y}`);
+    }
+  }
+  return reachable;
+}
+
+function getPathCells(origin: { x: number; y: number }, target: { x: number; y: number }) {
+  const path: Array<{ x: number; y: number }> = [];
+  let currentX = origin.x;
+  let currentY = origin.y;
+  while (currentX !== target.x || currentY !== target.y) {
+    if (currentX < target.x) {
+      currentX += 1;
+    } else if (currentX > target.x) {
+      currentX -= 1;
+    } else if (currentY < target.y) {
+      currentY += 1;
+    } else if (currentY > target.y) {
+      currentY -= 1;
+    }
+    path.push({ x: currentX, y: currentY });
+  }
+  return path;
+}
+
+function showMovementWarning(message: string) {
+  const now = Date.now();
+  if (message === movementWarningMessage && now - movementWarningAt < 1200) {
+    return;
+  }
+  movementWarningMessage = message;
+  movementWarningAt = now;
+  appendChatMessage(message);
+}
+
 function renderGameGrid() {
   if (!gamePosition || !canvasWorld) {
     return;
@@ -927,10 +967,51 @@ function renderGameGrid() {
     canvasTokenLayer.innerHTML = "";
   }
   canvasOverlay.innerHTML = "";
+  if (!movementOverlayLayer) {
+    movementOverlayLayer = document.createElement("div");
+    movementOverlayLayer.className = "vtt-movement-overlay";
+  }
+  movementOverlayLayer.innerHTML = "";
+  canvasOverlay.appendChild(movementOverlayLayer);
   const { step, offsetX, offsetY } = getGridMetrics();
   const worldSize = gridSize * step;
   canvasWorld.style.width = `${worldSize}px`;
   canvasWorld.style.height = `${worldSize}px`;
+
+  const activeToken = getActiveCombatToken();
+  const isPlayerTurn = activeToken?.type === "player";
+  if (combatState.enabled && combatState.started && activeToken && isPlayerTurn) {
+    const remainingMoves = activeToken.movementRemaining ?? 0;
+    const reachable = getReachableCells(activeToken, remainingMoves);
+    reachable.forEach((key) => {
+      const [xStr, yStr] = key.split(",");
+      const x = Number(xStr);
+      const y = Number(yStr);
+      if (x === activeToken.x && y === activeToken.y) {
+        return;
+      }
+      const cell = document.createElement("div");
+      cell.className = "vtt-movement-cell";
+      cell.style.left = `${x * step + offsetX + 2}px`;
+      cell.style.top = `${y * step + offsetY + 2}px`;
+      cell.style.width = `${step - 4}px`;
+      cell.style.height = `${step - 4}px`;
+      movementOverlayLayer?.appendChild(cell);
+    });
+
+    if (hoveredGridCell && reachable.has(`${hoveredGridCell.x},${hoveredGridCell.y}`)) {
+      const path = getPathCells(activeToken, hoveredGridCell);
+      path.forEach((point) => {
+        const cell = document.createElement("div");
+        cell.className = "vtt-movement-cell path";
+        cell.style.left = `${point.x * step + offsetX + 4}px`;
+        cell.style.top = `${point.y * step + offsetY + 4}px`;
+        cell.style.width = `${step - 8}px`;
+        cell.style.height = `${step - 8}px`;
+        movementOverlayLayer?.appendChild(cell);
+      });
+    }
+  }
 
   canvasGridLayer.style.display = gridVisible ? "block" : "none";
   canvasGridLayer.style.backgroundImage =
@@ -1440,7 +1521,7 @@ function setGameView(session: Session) {
             selectToken(clickedTokenId);
             if (combatState.enabled && combatState.started) {
               if (!canTokenMove(token, 1)) {
-                appendChatMessage("Déplacement déjà utilisé.");
+                showMovementWarning("PM insuffisants.");
                 return;
               }
             }
@@ -1461,11 +1542,11 @@ function setGameView(session: Session) {
                 }
                 const cost = getMoveCost(targetToken, coords);
                 if (cost !== 1) {
-                  appendChatMessage("Déplacement invalide.");
+                  showMovementWarning("Case hors portée.");
                   return;
                 }
                 if (!canTokenMove(targetToken, cost)) {
-                  appendChatMessage("Déplacement déjà utilisé.");
+                  showMovementWarning("PM insuffisants.");
                   return;
                 }
               }
@@ -1536,6 +1617,23 @@ function setGameView(session: Session) {
             renderGameGrid();
             updateCombatHUD();
           }
+        }
+        const activeToken = getActiveCombatToken();
+        const isPlayerTurn = activeToken?.type === "player";
+        if (combatState.enabled && combatState.started && activeToken && isPlayerTurn) {
+          const coords = getGridCoordinates(event);
+          if (coords) {
+            if (!hoveredGridCell || hoveredGridCell.x !== coords.x || hoveredGridCell.y !== coords.y) {
+              hoveredGridCell = coords;
+              renderGameGrid();
+            }
+          } else if (hoveredGridCell) {
+            hoveredGridCell = null;
+            renderGameGrid();
+          }
+        } else if (hoveredGridCell) {
+          hoveredGridCell = null;
+          renderGameGrid();
         }
         if (draggingTokenId && activeTool === "token") {
           const coords = getGridCoordinates(event);
@@ -1781,8 +1879,12 @@ let draggingTokenStart: { x: number; y: number } | null = null;
 let tokenIdCounter = 1;
 let attackState: { attackerId: string; awaitingTarget: boolean } | null = null;
 let hoveredTokenId: string | null = null;
+let hoveredGridCell: { x: number; y: number } | null = null;
 let measureLocked = false;
 let vttChatLog: HTMLDivElement | null = null;
+let movementOverlayLayer: HTMLDivElement | null = null;
+let movementWarningMessage = "";
+let movementWarningAt = 0;
 let combatToggleBtn: HTMLButtonElement | null = null;
 let vttEndTurnBtn: HTMLButtonElement | null = null;
 let combatInfo: HTMLSpanElement | null = null;

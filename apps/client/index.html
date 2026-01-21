@@ -440,6 +440,22 @@
         pointer-events: none;
         z-index: 3;
       }
+      .vtt-movement-overlay {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 2;
+      }
+      .vtt-movement-cell {
+        position: absolute;
+        background: rgba(34, 197, 94, 0.18);
+        border: 1px solid rgba(34, 197, 94, 0.35);
+        border-radius: 6px;
+      }
+      .vtt-movement-cell.path {
+        background: rgba(56, 189, 248, 0.25);
+        border-color: rgba(56, 189, 248, 0.5);
+      }
       .vtt-token {
         position: absolute;
         border-radius: 999px;
