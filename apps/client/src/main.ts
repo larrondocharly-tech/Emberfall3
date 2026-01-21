@@ -980,14 +980,15 @@ function renderGameGrid() {
 
   const activeToken = getActiveCombatToken();
   const isPlayerTurn = activeToken?.type === "player";
-  if (combatState.enabled && combatState.started && activeToken && isPlayerTurn) {
+  const hoveredCell = hoveredGridCell;
+  if (combatState.enabled && combatState.started && activeToken && isPlayerTurn && hoveredCell) {
     const remainingMoves = activeToken.movementRemaining ?? 0;
-    const reachable = getReachableCells(activeToken, remainingMoves);
+    const reachable = getReachableCells(hoveredCell, remainingMoves);
     reachable.forEach((key) => {
       const [xStr, yStr] = key.split(",");
       const x = Number(xStr);
       const y = Number(yStr);
-      if (x === activeToken.x && y === activeToken.y) {
+      if (x === hoveredCell.x && y === hoveredCell.y) {
         return;
       }
       const cell = document.createElement("div");
@@ -999,8 +1000,8 @@ function renderGameGrid() {
       movementOverlayLayer?.appendChild(cell);
     });
 
-    if (hoveredGridCell && reachable.has(`${hoveredGridCell.x},${hoveredGridCell.y}`)) {
-      const path = getPathCells(activeToken, hoveredGridCell);
+    if (reachable.has(`${hoveredCell.x},${hoveredCell.y}`)) {
+      const path = getPathCells(activeToken, hoveredCell);
       path.forEach((point) => {
         const cell = document.createElement("div");
         cell.className = "vtt-movement-cell path";
@@ -1635,6 +1636,23 @@ function setGameView(session: Session) {
           hoveredGridCell = null;
           renderGameGrid();
         }
+        const activeToken = getActiveCombatToken();
+        const isPlayerTurn = activeToken?.type === "player";
+        if (combatState.enabled && combatState.started && activeToken && isPlayerTurn) {
+          const coords = getGridCoordinates(event);
+          if (coords) {
+            if (!hoveredGridCell || hoveredGridCell.x !== coords.x || hoveredGridCell.y !== coords.y) {
+              hoveredGridCell = coords;
+              renderGameGrid();
+            }
+          } else if (hoveredGridCell) {
+            hoveredGridCell = null;
+            renderGameGrid();
+          }
+        } else if (hoveredGridCell) {
+          hoveredGridCell = null;
+          renderGameGrid();
+        }
         if (draggingTokenId && activeTool === "token") {
           const coords = getGridCoordinates(event);
           if (coords) {
@@ -1720,6 +1738,12 @@ function setGameView(session: Session) {
       canvasViewport.addEventListener("pointermove", handlePointerMove);
       canvasViewport.addEventListener("pointerup", handlePointerUp);
       canvasViewport.addEventListener("pointerleave", handlePointerUp);
+      canvasViewport.addEventListener("pointerleave", () => {
+        if (hoveredGridCell) {
+          hoveredGridCell = null;
+          renderGameGrid();
+        }
+      });
     }
   }
 
