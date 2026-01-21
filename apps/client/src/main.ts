@@ -243,6 +243,7 @@ function selectToken(id: string | null) {
   if (activeSession) {
     renderActorsPanel(activeSession);
   }
+  updateCombatHUD();
 }
 
 function updateTokenPosition(id: string, position: { x: number; y: number }) {
@@ -316,7 +317,15 @@ function getDistanceBetweenTokens(attacker: GameToken, target: GameToken) {
 }
 
 function getMoveCost(from: { x: number; y: number }, to: { x: number; y: number }) {
-  return chebyshevDistance(from, to);
+  const dx = Math.abs(from.x - to.x);
+  const dy = Math.abs(from.y - to.y);
+  if (dx === 0 && dy === 0) {
+    return 0;
+  }
+  if (dx <= 1 && dy <= 1) {
+    return 1;
+  }
+  return Number.POSITIVE_INFINITY;
 }
 
 function appendChatMessage(message: string) {
@@ -388,7 +397,7 @@ function updateCombatInfo() {
     vttEndTurnBtn.style.display = combatState.enabled ? "inline-flex" : "none";
   }
   if (!combatState.enabled) {
-    combatInfo.textContent = "Exploration";
+    combatInfo.textContent = combatEnded ? "Combat terminé" : "Exploration";
     return;
   }
   if (!combatState.started) {
@@ -408,15 +417,37 @@ function updateCombatInfo() {
   updateChatVisibility();
 }
 
+function renderPips(container: HTMLDivElement, total: number, remaining: number) {
+  container.innerHTML = "";
+  if (total <= 0) {
+    const empty = document.createElement("span");
+    empty.className = "vtt-combat-hud-pip empty";
+    container.appendChild(empty);
+    return;
+  }
+  for (let index = 0; index < total; index += 1) {
+    const pip = document.createElement("span");
+    pip.className = "vtt-combat-hud-pip";
+    if (index < remaining) {
+      pip.classList.add("active");
+    }
+    container.appendChild(pip);
+  }
+}
+
 function updateCombatHUD() {
   if (!combatHud) {
     return;
   }
-  if (!combatState.enabled || !combatState.started) {
+  if (chat) {
+    chat.style.display = combatState.enabled ? "flex" : "none";
+  }
+  if (!combatState.enabled) {
     combatHud.root.style.display = "none";
+    hoveredGridCell = null;
     return;
   }
-  combatHud.root.style.display = "flex";
+  combatHud.root.style.display = "grid";
   const activeToken = getActiveCombatToken();
   const activeName = activeToken?.name ?? "—";
   const activeType =
@@ -429,20 +460,39 @@ function updateCombatHUD() {
           : "—";
   combatHud.tokenName.textContent = activeName;
   combatHud.tokenType.textContent = activeType;
-  combatHud.round.textContent = `Round: ${combatState.round}`;
-  combatHud.actions.textContent = activeToken
-    ? `Actions restantes: ${activeToken.actionsRemaining}/${activeToken.actionsPerTurn}`
-    : "Actions restantes: —";
-  combatHud.movement.textContent = activeToken
-    ? `Déplacement restant: ${activeToken.movementRemaining}/${activeToken.movementPerTurn} cases`
-    : "Déplacement restant: —";
+  combatHud.round.textContent = `Round ${combatState.round || "—"}`;
+  combatHud.hp.textContent = activeToken ? `PV: ${activeToken.hp}/${activeToken.maxHp}` : "PV: —";
 
   const isPlayerTurn = activeToken?.type === "player";
   const canAct = activeToken ? canTokenAct(activeToken) : false;
+  const actionTotal = activeToken?.actionsPerTurn ?? 0;
+  const actionRemaining = activeToken?.actionsRemaining ?? 0;
+  const movementTotal = activeToken?.movementPerTurn ?? 0;
+  const movementRemaining = activeToken?.movementRemaining ?? 0;
+
+  renderPips(combatHud.actionPips, actionTotal, actionRemaining);
+  renderPips(combatHud.movementPips, movementTotal, movementRemaining);
+
+  combatHud.actionValue.textContent = `${actionRemaining}/${actionTotal}`;
+  combatHud.movementValue.textContent = `${movementRemaining}/${movementTotal}`;
+
+  combatHud.actionNotice.textContent =
+    actionTotal > 0 && actionRemaining === 0 ? "Actions épuisées" : "";
+  combatHud.movementNotice.textContent =
+    movementTotal > 0 && movementRemaining === 0 ? "Déplacement épuisé" : "";
+
+  combatHud.statusBadge.textContent = isPlayerTurn ? "À TON TOUR" : "EN ATTENTE";
+  combatHud.statusBadge.classList.toggle("active", isPlayerTurn);
+  combatHud.statusBadge.classList.toggle("waiting", !isPlayerTurn);
+
   combatHud.attackButton.disabled = !isPlayerTurn || !canAct || Boolean(attackState);
   combatHud.spellsButton.disabled = !isPlayerTurn || !canAct;
   combatHud.itemsButton.disabled = !isPlayerTurn || !canAct;
   combatHud.endTurnButton.disabled = !isPlayerTurn;
+
+  if (!isPlayerTurn) {
+    hoveredGridCell = null;
+  }
 }
 
 function updateChatVisibility() {
@@ -499,6 +549,7 @@ function startCombat() {
   if (!combatState.enabled || combatState.started) {
     return;
   }
+  combatEnded = false;
   gameState = {
     ...gameState,
     tokens: gameState.tokens.map((token) => resetTokenTurnResources(token))
@@ -541,6 +592,7 @@ function resetCombat() {
     activeIndex: 0,
     round: 0
   };
+  combatEnded = true;
   gameState = {
     ...gameState,
     tokens: gameState.tokens.map((token) => resetTokenTurnResources(token))
@@ -552,6 +604,7 @@ function resetCombat() {
   if (activeSession) {
     renderActorsPanel(activeSession);
   }
+  updateCombatHUD();
 }
 
 function endTurn() {
@@ -688,6 +741,7 @@ function setAttackState(attackerId: string | null) {
   if (activeSession) {
     renderActorsPanel(activeSession);
   }
+  updateCombatHUD();
 }
 
 function clearMeasure() {
@@ -847,13 +901,63 @@ function createPing(x: number, y: number) {
   }, 1000);
 }
 
+function getReachableCells(origin: { x: number; y: number }, range: number) {
+  const reachable = new Set<string>();
+  if (range <= 0) {
+    return reachable;
+  }
+  for (let dx = -range; dx <= range; dx += 1) {
+    for (let dy = -range; dy <= range; dy += 1) {
+      if (Math.abs(dx) + Math.abs(dy) > range) {
+        continue;
+      }
+      const x = origin.x + dx;
+      const y = origin.y + dy;
+      if (x < 0 || y < 0 || x >= gridSize || y >= gridSize) {
+        continue;
+      }
+      reachable.add(`${x},${y}`);
+    }
+  }
+  return reachable;
+}
+
+function getPathCells(origin: { x: number; y: number }, target: { x: number; y: number }) {
+  const path: Array<{ x: number; y: number }> = [];
+  let currentX = origin.x;
+  let currentY = origin.y;
+  while (currentX !== target.x || currentY !== target.y) {
+    if (currentX < target.x) {
+      currentX += 1;
+    } else if (currentX > target.x) {
+      currentX -= 1;
+    } else if (currentY < target.y) {
+      currentY += 1;
+    } else if (currentY > target.y) {
+      currentY -= 1;
+    }
+    path.push({ x: currentX, y: currentY });
+  }
+  return path;
+}
+
+function showMovementWarning(message: string) {
+  const now = Date.now();
+  if (message === movementWarningMessage && now - movementWarningAt < 1200) {
+    return;
+  }
+  movementWarningMessage = message;
+  movementWarningAt = now;
+  appendChatMessage(message);
+}
+
 function renderGameGrid() {
   if (!gamePosition || !canvasWorld) {
     return;
   }
-  const activeToken = getTokenById(selectedTokenId) ?? getTokenById("player");
-  if (activeToken) {
-    gamePosition.textContent = `Position: (${activeToken.x}, ${activeToken.y})`;
+  const currentActiveToken = getTokenById(selectedTokenId) ?? getTokenById("player");
+  if (currentActiveToken) {
+    gamePosition.textContent = `Position: (${currentActiveToken.x}, ${currentActiveToken.y})`;
   }
   if (!canvasGridLayer || !canvasOverlay) {
     return;
@@ -863,10 +967,51 @@ function renderGameGrid() {
     canvasTokenLayer.innerHTML = "";
   }
   canvasOverlay.innerHTML = "";
+  if (!movementOverlayLayer) {
+    movementOverlayLayer = document.createElement("div");
+    movementOverlayLayer.className = "vtt-movement-overlay";
+  }
+  movementOverlayLayer.innerHTML = "";
+  canvasOverlay.appendChild(movementOverlayLayer);
   const { step, offsetX, offsetY } = getGridMetrics();
   const worldSize = gridSize * step;
   canvasWorld.style.width = `${worldSize}px`;
   canvasWorld.style.height = `${worldSize}px`;
+
+  const activeToken = getActiveCombatToken();
+  const isPlayerTurn = activeToken?.type === "player";
+  if (combatState.enabled && combatState.started && activeToken && isPlayerTurn) {
+    const remainingMoves = activeToken.movementRemaining ?? 0;
+    const reachable = getReachableCells(activeToken, remainingMoves);
+    reachable.forEach((key) => {
+      const [xStr, yStr] = key.split(",");
+      const x = Number(xStr);
+      const y = Number(yStr);
+      if (x === activeToken.x && y === activeToken.y) {
+        return;
+      }
+      const cell = document.createElement("div");
+      cell.className = "vtt-movement-cell";
+      cell.style.left = `${x * step + offsetX + 2}px`;
+      cell.style.top = `${y * step + offsetY + 2}px`;
+      cell.style.width = `${step - 4}px`;
+      cell.style.height = `${step - 4}px`;
+      movementOverlayLayer?.appendChild(cell);
+    });
+
+    if (hoveredGridCell && reachable.has(`${hoveredGridCell.x},${hoveredGridCell.y}`)) {
+      const path = getPathCells(activeToken, hoveredGridCell);
+      path.forEach((point) => {
+        const cell = document.createElement("div");
+        cell.className = "vtt-movement-cell path";
+        cell.style.left = `${point.x * step + offsetX + 4}px`;
+        cell.style.top = `${point.y * step + offsetY + 4}px`;
+        cell.style.width = `${step - 8}px`;
+        cell.style.height = `${step - 8}px`;
+        movementOverlayLayer?.appendChild(cell);
+      });
+    }
+  }
 
   canvasGridLayer.style.display = gridVisible ? "block" : "none";
   canvasGridLayer.style.backgroundImage =
@@ -1242,6 +1387,13 @@ function setGameView(session: Session) {
     tabContents = rightSidebar.contents;
     bottomControls = bottom;
 
+    if (combatHud && chat) {
+      chat.classList.add("vtt-combat-chat");
+      if (!combatHud.chatSlot.contains(chat)) {
+        combatHud.chatSlot.appendChild(chat);
+      }
+    }
+
     toggleSidebarBtn.addEventListener("click", () => {
       if (!rightSidebarRoot) {
         return;
@@ -1369,7 +1521,7 @@ function setGameView(session: Session) {
             selectToken(clickedTokenId);
             if (combatState.enabled && combatState.started) {
               if (!canTokenMove(token, 1)) {
-                appendChatMessage("Déplacement déjà utilisé.");
+                showMovementWarning("PM insuffisants.");
                 return;
               }
             }
@@ -1389,15 +1541,19 @@ function setGameView(session: Session) {
                   return;
                 }
                 const cost = getMoveCost(targetToken, coords);
+                if (cost !== 1) {
+                  showMovementWarning("Case hors portée.");
+                  return;
+                }
                 if (!canTokenMove(targetToken, cost)) {
-                  appendChatMessage("Déplacement déjà utilisé.");
+                  showMovementWarning("PM insuffisants.");
                   return;
                 }
               }
               updateTokenPosition(targetToken.id, coords);
               if (combatState.enabled && combatState.started) {
                 const cost = getMoveCost(targetToken, coords);
-                if (cost > 0) {
+                if (cost === 1) {
                   spendTokenMovement(targetToken.id, cost);
                 }
               }
@@ -1459,7 +1615,25 @@ function setGameView(session: Session) {
           if (tokenId !== hoveredTokenId) {
             hoveredTokenId = tokenId;
             renderGameGrid();
+            updateCombatHUD();
           }
+        }
+        const activeToken = getActiveCombatToken();
+        const isPlayerTurn = activeToken?.type === "player";
+        if (combatState.enabled && combatState.started && activeToken && isPlayerTurn) {
+          const coords = getGridCoordinates(event);
+          if (coords) {
+            if (!hoveredGridCell || hoveredGridCell.x !== coords.x || hoveredGridCell.y !== coords.y) {
+              hoveredGridCell = coords;
+              renderGameGrid();
+            }
+          } else if (hoveredGridCell) {
+            hoveredGridCell = null;
+            renderGameGrid();
+          }
+        } else if (hoveredGridCell) {
+          hoveredGridCell = null;
+          renderGameGrid();
         }
         if (draggingTokenId && activeTool === "token") {
           const coords = getGridCoordinates(event);
@@ -1468,6 +1642,9 @@ function setGameView(session: Session) {
               const token = getTokenById(draggingTokenId);
               if (token) {
                 const cost = getMoveCost(draggingTokenStart, coords);
+                if (cost !== 1) {
+                  return;
+                }
                 if (!canTokenMove(token, cost)) {
                   return;
                 }
@@ -1514,7 +1691,7 @@ function setGameView(session: Session) {
             const token = getTokenById(draggingTokenId);
             if (token) {
               const cost = getMoveCost(draggingTokenStart, token);
-              if (cost > 0) {
+              if (cost === 1) {
                 spendTokenMovement(draggingTokenId, cost);
               }
             }
@@ -1702,23 +1879,34 @@ let draggingTokenStart: { x: number; y: number } | null = null;
 let tokenIdCounter = 1;
 let attackState: { attackerId: string; awaitingTarget: boolean } | null = null;
 let hoveredTokenId: string | null = null;
+let hoveredGridCell: { x: number; y: number } | null = null;
 let measureLocked = false;
 let vttChatLog: HTMLDivElement | null = null;
+let movementOverlayLayer: HTMLDivElement | null = null;
+let movementWarningMessage = "";
+let movementWarningAt = 0;
 let combatToggleBtn: HTMLButtonElement | null = null;
 let vttEndTurnBtn: HTMLButtonElement | null = null;
 let combatInfo: HTMLSpanElement | null = null;
 let combatHud:
   | {
       root: HTMLDivElement;
+      statusBadge: HTMLSpanElement;
       tokenName: HTMLSpanElement;
       tokenType: HTMLSpanElement;
       round: HTMLSpanElement;
-      actions: HTMLSpanElement;
-      movement: HTMLSpanElement;
+      hp: HTMLSpanElement;
+      actionPips: HTMLDivElement;
+      actionValue: HTMLSpanElement;
+      actionNotice: HTMLSpanElement;
+      movementPips: HTMLDivElement;
+      movementValue: HTMLSpanElement;
+      movementNotice: HTMLSpanElement;
       attackButton: HTMLButtonElement;
       spellsButton: HTMLButtonElement;
       itemsButton: HTMLButtonElement;
       endTurnButton: HTMLButtonElement;
+      chatSlot: HTMLDivElement;
     }
   | null = null;
 let combatState = {
@@ -1728,6 +1916,7 @@ let combatState = {
   activeIndex: 0,
   round: 0
 };
+let combatEnded = false;
 let isAITurnRunning = false;
 
 class GameScene extends Phaser.Scene {
