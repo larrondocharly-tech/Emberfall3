@@ -200,49 +200,178 @@
         left: 16px;
         bottom: 16px;
         z-index: 50;
-        background: rgba(15, 23, 42, 0.92);
-        border: 1px solid rgba(51, 65, 85, 0.8);
-        border-radius: 12px;
-        padding: 12px 14px;
-        min-width: 260px;
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(2, 6, 23, 0.92));
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        border-radius: 16px;
+        padding: 14px 16px;
+        width: 360px;
         display: none;
         flex-direction: column;
-        gap: 8px;
+        gap: 10px;
         color: #f8fafc;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
       }
       .vtt-combat-hud-header {
         display: flex;
         justify-content: space-between;
+        align-items: center;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .vtt-combat-hud-status {
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-weight: 700;
+        background: rgba(100, 116, 139, 0.4);
+        color: #e2e8f0;
+      }
+      .vtt-combat-hud-status.active {
+        background: rgba(34, 197, 94, 0.25);
+        color: #4ade80;
+        border: 1px solid rgba(74, 222, 128, 0.4);
+      }
+      .vtt-combat-hud-status.waiting {
+        background: rgba(245, 158, 11, 0.2);
+        color: #fbbf24;
+        border: 1px solid rgba(245, 158, 11, 0.4);
+      }
+      .vtt-combat-hud-round {
+        color: #cbd5f5;
         font-weight: 600;
-        font-size: 14px;
+      }
+      .vtt-combat-hud-identity {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      .vtt-combat-hud-name {
+        font-size: 16px;
       }
       .vtt-combat-hud-type {
         color: #94a3b8;
         font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
       }
       .vtt-combat-hud-stats {
         display: grid;
-        gap: 4px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
         font-size: 12px;
         color: #e2e8f0;
       }
+      .vtt-combat-hud-stats span {
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(51, 65, 85, 0.5);
+        padding: 6px 8px;
+        border-radius: 10px;
+        text-align: center;
+      }
+      .vtt-combat-hud-movement {
+        display: grid;
+        gap: 6px;
+      }
+      .vtt-combat-hud-movement-label {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        color: #e2e8f0;
+      }
+      .vtt-combat-hud-movement-value {
+        color: #93c5fd;
+        font-weight: 600;
+        margin-left: auto;
+      }
+      .vtt-combat-hud-movement-track {
+        height: 8px;
+        border-radius: 999px;
+        background: rgba(30, 41, 59, 0.7);
+        overflow: hidden;
+        border: 1px solid rgba(71, 85, 105, 0.6);
+      }
+      .vtt-combat-hud-movement-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #38bdf8, #0ea5e9);
+      }
+      .vtt-combat-hud-movement-state {
+        font-size: 11px;
+        color: #94a3b8;
+        min-height: 14px;
+      }
+      .vtt-combat-hud-movement-state.active {
+        color: #f87171;
+      }
       .vtt-combat-hud-actions {
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 8px;
       }
       .vtt-combat-hud-actions button {
         border: 1px solid #1f2937;
-        background: #1f2937;
+        background: #111827;
         color: #f8fafc;
-        border-radius: 8px;
-        padding: 6px 8px;
+        border-radius: 10px;
+        padding: 8px 6px;
         cursor: pointer;
         font-size: 12px;
+        font-weight: 600;
+        transition: all 0.2s ease;
+      }
+      .vtt-combat-hud-actions button:hover:not(:disabled) {
+        border-color: #38bdf8;
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
       }
       .vtt-combat-hud-actions button:disabled {
-        opacity: 0.5;
+        opacity: 0.4;
         cursor: not-allowed;
+      }
+      .vtt-combat-hud-action-status {
+        font-size: 12px;
+        color: #facc15;
+        min-height: 16px;
+      }
+      .vtt-combat-hud-chat {
+        background: rgba(15, 23, 42, 0.6);
+        border-radius: 12px;
+        border: 1px solid rgba(51, 65, 85, 0.5);
+        padding: 10px;
+        display: grid;
+        gap: 8px;
+      }
+      .vtt-combat-hud-chat-header {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #94a3b8;
+      }
+      .vtt-combat-hud-chat-slot {
+        display: grid;
+        gap: 6px;
+      }
+      .vtt-combat-chat {
+        position: static;
+        inset: auto;
+        width: 100%;
+        padding: 0;
+        background: transparent;
+        border-radius: 0;
+        box-shadow: none;
+        display: flex;
+        gap: 6px;
+      }
+      .vtt-combat-chat .chat-log {
+        height: 140px;
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(51, 65, 85, 0.5);
+      }
+      .vtt-combat-chat input {
+        background: rgba(30, 41, 59, 0.8);
+        color: #f8fafc;
+        border: 1px solid rgba(71, 85, 105, 0.6);
       }
       .vtt-canvas-header {
         position: absolute;
