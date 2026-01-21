@@ -409,6 +409,24 @@ function updateCombatInfo() {
   updateChatVisibility();
 }
 
+function renderPips(container: HTMLDivElement, total: number, remaining: number) {
+  container.innerHTML = "";
+  if (total <= 0) {
+    const empty = document.createElement("span");
+    empty.className = "vtt-combat-hud-pip empty";
+    container.appendChild(empty);
+    return;
+  }
+  for (let index = 0; index < total; index += 1) {
+    const pip = document.createElement("span");
+    pip.className = "vtt-combat-hud-pip";
+    if (index < remaining) {
+      pip.classList.add("active");
+    }
+    container.appendChild(pip);
+  }
+}
+
 function updateCombatHUD() {
   if (!combatHud) {
     return;
@@ -416,11 +434,11 @@ function updateCombatHUD() {
   if (chat) {
     chat.style.display = combatState.enabled ? "flex" : "none";
   }
-  if (!combatState.enabled || !combatState.started) {
+  if (!combatState.enabled) {
     combatHud.root.style.display = "none";
     return;
   }
-  combatHud.root.style.display = "flex";
+  combatHud.root.style.display = "grid";
   const activeToken = getActiveCombatToken();
   const activeName = activeToken?.name ?? "—";
   const activeType =
@@ -433,26 +451,26 @@ function updateCombatHUD() {
           : "—";
   combatHud.tokenName.textContent = activeName;
   combatHud.tokenType.textContent = activeType;
-  combatHud.round.textContent = `Round ${combatState.round}`;
-  combatHud.actions.textContent = activeToken
-    ? `Actions: ${activeToken.actionsRemaining}/${activeToken.actionsPerTurn}`
-    : "Actions: —";
-  combatHud.movement.textContent = activeToken
-    ? `Déplacement: ${activeToken.movementRemaining}/${activeToken.movementPerTurn} cases`
-    : "Déplacement: —";
+  combatHud.round.textContent = `Round ${combatState.round || "—"}`;
   combatHud.hp.textContent = activeToken ? `PV: ${activeToken.hp}/${activeToken.maxHp}` : "PV: —";
 
   const isPlayerTurn = activeToken?.type === "player";
   const canAct = activeToken ? canTokenAct(activeToken) : false;
+  const actionTotal = activeToken?.actionsPerTurn ?? 0;
+  const actionRemaining = activeToken?.actionsRemaining ?? 0;
   const movementTotal = activeToken?.movementPerTurn ?? 0;
   const movementRemaining = activeToken?.movementRemaining ?? 0;
-  const movementExhausted = Boolean(activeToken) && movementRemaining === 0;
-  const movementRatio = movementTotal > 0 ? movementRemaining / movementTotal : 0;
 
-  combatHud.movementValue.textContent = `${movementRemaining}/${movementTotal} cases`;
-  combatHud.movementFill.style.width = `${Math.max(0, Math.min(1, movementRatio)) * 100}%`;
-  combatHud.movementState.textContent = movementExhausted ? "Déplacement épuisé" : "";
-  combatHud.movementState.classList.toggle("active", movementExhausted);
+  renderPips(combatHud.actionPips, actionTotal, actionRemaining);
+  renderPips(combatHud.movementPips, movementTotal, movementRemaining);
+
+  combatHud.actionValue.textContent = `${actionRemaining}/${actionTotal}`;
+  combatHud.movementValue.textContent = `${movementRemaining}/${movementTotal}`;
+
+  combatHud.actionNotice.textContent =
+    actionTotal > 0 && actionRemaining === 0 ? "Actions épuisées" : "";
+  combatHud.movementNotice.textContent =
+    movementTotal > 0 && movementRemaining === 0 ? "Déplacement épuisé" : "";
 
   combatHud.statusBadge.textContent = isPlayerTurn ? "À TON TOUR" : "EN ATTENTE";
   combatHud.statusBadge.classList.toggle("active", isPlayerTurn);
@@ -1760,13 +1778,13 @@ let combatHud:
       tokenName: HTMLSpanElement;
       tokenType: HTMLSpanElement;
       round: HTMLSpanElement;
-      actions: HTMLSpanElement;
-      movement: HTMLSpanElement;
       hp: HTMLSpanElement;
+      actionPips: HTMLDivElement;
+      actionValue: HTMLSpanElement;
+      actionNotice: HTMLSpanElement;
+      movementPips: HTMLDivElement;
       movementValue: HTMLSpanElement;
-      movementFill: HTMLDivElement;
-      movementState: HTMLSpanElement;
-      actionStatus: HTMLSpanElement;
+      movementNotice: HTMLSpanElement;
       attackButton: HTMLButtonElement;
       spellsButton: HTMLButtonElement;
       itemsButton: HTMLButtonElement;

@@ -196,28 +196,42 @@
         z-index: 1;
       }
       .vtt-combat-hud {
-        position: absolute;
+        position: fixed;
         left: 16px;
+        right: 16px;
         bottom: 16px;
-        z-index: 50;
-        background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(2, 6, 23, 0.92));
-        border: 1px solid rgba(148, 163, 184, 0.3);
-        border-radius: 16px;
-        padding: 14px 16px;
-        width: 360px;
+        z-index: 80;
+        background: rgba(15, 23, 42, 0.82);
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        border-radius: 18px;
+        padding: 14px 18px;
         display: none;
-        flex-direction: column;
-        gap: 10px;
         color: #f8fafc;
-        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+        backdrop-filter: blur(10px);
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+        grid-template-columns: 1.2fr 2fr 1.2fr;
+        grid-template-areas:
+          "left center right"
+          "chat chat chat";
+        gap: 12px 16px;
       }
-      .vtt-combat-hud-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        font-size: 12px;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
+      .vtt-combat-hud-left {
+        grid-area: left;
+        display: grid;
+        gap: 6px;
+        align-content: start;
+      }
+      .vtt-combat-hud-center {
+        grid-area: center;
+        display: grid;
+        gap: 8px;
+      }
+      .vtt-combat-hud-right {
+        grid-area: right;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        align-content: start;
       }
       .vtt-combat-hud-status {
         padding: 4px 10px;
@@ -225,6 +239,7 @@
         font-weight: 700;
         background: rgba(100, 116, 139, 0.4);
         color: #e2e8f0;
+        width: fit-content;
       }
       .vtt-combat-hud-status.active {
         background: rgba(34, 197, 94, 0.25);
@@ -236,19 +251,9 @@
         color: #fbbf24;
         border: 1px solid rgba(245, 158, 11, 0.4);
       }
-      .vtt-combat-hud-round {
-        color: #cbd5f5;
-        font-weight: 600;
-      }
-      .vtt-combat-hud-identity {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        font-size: 16px;
-        font-weight: 600;
-      }
       .vtt-combat-hud-name {
         font-size: 16px;
+        font-weight: 600;
       }
       .vtt-combat-hud-type {
         color: #94a3b8;
@@ -256,61 +261,54 @@
         text-transform: uppercase;
         letter-spacing: 0.08em;
       }
-      .vtt-combat-hud-stats {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 6px;
+      .vtt-combat-hud-hp,
+      .vtt-combat-hud-round {
         font-size: 12px;
-        color: #e2e8f0;
+        color: #cbd5f5;
       }
-      .vtt-combat-hud-stats span {
-        background: rgba(15, 23, 42, 0.6);
-        border: 1px solid rgba(51, 65, 85, 0.5);
-        padding: 6px 8px;
-        border-radius: 10px;
-        text-align: center;
-      }
-      .vtt-combat-hud-movement {
+      .vtt-combat-hud-row {
         display: grid;
-        gap: 6px;
+        grid-template-columns: 32px 1fr auto;
+        align-items: center;
+        gap: 10px;
       }
-      .vtt-combat-hud-movement-label {
+      .vtt-combat-hud-label {
+        font-size: 12px;
+        font-weight: 700;
+        color: #f8fafc;
+      }
+      .vtt-combat-hud-pips {
         display: flex;
-        justify-content: space-between;
-        font-size: 12px;
-        color: #e2e8f0;
+        gap: 6px;
+        align-items: center;
+        flex-wrap: wrap;
       }
-      .vtt-combat-hud-movement-value {
-        color: #93c5fd;
-        font-weight: 600;
-        margin-left: auto;
-      }
-      .vtt-combat-hud-movement-track {
+      .vtt-combat-hud-pip {
+        width: 14px;
         height: 8px;
         border-radius: 999px;
-        background: rgba(30, 41, 59, 0.7);
-        overflow: hidden;
-        border: 1px solid rgba(71, 85, 105, 0.6);
+        background: rgba(100, 116, 139, 0.35);
+        border: 1px solid rgba(148, 163, 184, 0.4);
       }
-      .vtt-combat-hud-movement-fill {
-        height: 100%;
-        width: 0%;
+      .vtt-combat-hud-pip.active {
         background: linear-gradient(90deg, #38bdf8, #0ea5e9);
+        border-color: rgba(56, 189, 248, 0.7);
+        box-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
       }
-      .vtt-combat-hud-movement-state {
+      .vtt-combat-hud-pip.empty {
+        width: 32px;
+      }
+      .vtt-combat-hud-value {
+        font-size: 12px;
+        color: #e2e8f0;
+        font-weight: 600;
+      }
+      .vtt-combat-hud-notice {
         font-size: 11px;
-        color: #94a3b8;
+        color: #fbbf24;
         min-height: 14px;
       }
-      .vtt-combat-hud-movement-state.active {
-        color: #f87171;
-      }
-      .vtt-combat-hud-actions {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 8px;
-      }
-      .vtt-combat-hud-actions button {
+      .vtt-combat-hud-right button {
         border: 1px solid #1f2937;
         background: #111827;
         color: #f8fafc;
@@ -321,20 +319,16 @@
         font-weight: 600;
         transition: all 0.2s ease;
       }
-      .vtt-combat-hud-actions button:hover:not(:disabled) {
+      .vtt-combat-hud-right button:hover:not(:disabled) {
         border-color: #38bdf8;
         box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
       }
-      .vtt-combat-hud-actions button:disabled {
+      .vtt-combat-hud-right button:disabled {
         opacity: 0.4;
         cursor: not-allowed;
       }
-      .vtt-combat-hud-action-status {
-        font-size: 12px;
-        color: #facc15;
-        min-height: 16px;
-      }
       .vtt-combat-hud-chat {
+        grid-area: chat;
         background: rgba(15, 23, 42, 0.6);
         border-radius: 12px;
         border: 1px solid rgba(51, 65, 85, 0.5);
@@ -360,7 +354,7 @@
         background: transparent;
         border-radius: 0;
         box-shadow: none;
-        display: flex;
+        display: grid;
         gap: 6px;
       }
       .vtt-combat-chat .chat-log {
