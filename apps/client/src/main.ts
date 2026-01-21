@@ -317,7 +317,15 @@ function getDistanceBetweenTokens(attacker: GameToken, target: GameToken) {
 }
 
 function getMoveCost(from: { x: number; y: number }, to: { x: number; y: number }) {
-  return Math.abs(from.x - to.x) + Math.abs(from.y - to.y);
+  const dx = Math.abs(from.x - to.x);
+  const dy = Math.abs(from.y - to.y);
+  if (dx === 0 && dy === 0) {
+    return 0;
+  }
+  if (dx <= 1 && dy <= 1) {
+    return 1;
+  }
+  return Number.POSITIVE_INFINITY;
 }
 
 function appendChatMessage(message: string) {
@@ -1452,6 +1460,10 @@ function setGameView(session: Session) {
                   return;
                 }
                 const cost = getMoveCost(targetToken, coords);
+                if (cost !== 1) {
+                  appendChatMessage("Déplacement invalide.");
+                  return;
+                }
                 if (!canTokenMove(targetToken, cost)) {
                   appendChatMessage("Déplacement déjà utilisé.");
                   return;
@@ -1460,7 +1472,7 @@ function setGameView(session: Session) {
               updateTokenPosition(targetToken.id, coords);
               if (combatState.enabled && combatState.started) {
                 const cost = getMoveCost(targetToken, coords);
-                if (cost > 0) {
+                if (cost === 1) {
                   spendTokenMovement(targetToken.id, cost);
                 }
               }
@@ -1532,6 +1544,9 @@ function setGameView(session: Session) {
               const token = getTokenById(draggingTokenId);
               if (token) {
                 const cost = getMoveCost(draggingTokenStart, coords);
+                if (cost !== 1) {
+                  return;
+                }
                 if (!canTokenMove(token, cost)) {
                   return;
                 }
@@ -1578,7 +1593,7 @@ function setGameView(session: Session) {
             const token = getTokenById(draggingTokenId);
             if (token) {
               const cost = getMoveCost(draggingTokenStart, token);
-              if (cost > 0) {
+              if (cost === 1) {
                 spendTokenMovement(draggingTokenId, cost);
               }
             }
