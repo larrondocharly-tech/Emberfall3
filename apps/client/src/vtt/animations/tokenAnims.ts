@@ -1,21 +1,12 @@
 import Phaser from "phaser";
+import type { TokenAnimEntry, TokenAnimState, TokenFacing } from "../render/tokenViewTypes";
 
-export type TokenFacing = "N" | "E" | "S" | "W";
-export type TokenAnimState = "idle" | "walk" | "attack" | "cast" | "hit";
+export type { TokenAnimEntry, TokenAnimState, TokenFacing } from "../render/tokenViewTypes";
 
-export type TokenAnimEntry = {
-  sprite: Phaser.GameObjects.Sprite;
-  label: Phaser.GameObjects.Text;
-  facing: TokenFacing;
-  animState: TokenAnimState;
-  walkTween?: Phaser.Tweens.Tween;
-  stateTween?: Phaser.Tweens.Tween;
-  castCircle?: Phaser.GameObjects.Arc;
-};
-
-const WALK_SCALE = 1.06;
+const WALK_SCALE_Y = 1.05;
+const WALK_SCALE_X = 0.98;
 const WALK_DURATION = 320;
-const ATTACK_SCALE = 1.15;
+const ATTACK_SCALE = 1.12;
 const CAST_COLOR = 0xfacc15;
 const HIT_COLOR = 0xef4444;
 
@@ -37,15 +28,15 @@ export const resolveFacingFromDelta = (dx: number, dy: number): TokenFacing => {
 };
 
 export const applyFacing = (entry: TokenAnimEntry) => {
-  entry.sprite.setFlipX(entry.facing === "W");
+  entry.view.sprite.setFlipX(entry.facing === "W");
 };
 
 export const setIdle = (entry: TokenAnimEntry) => {
   stopTween(entry.walkTween);
   entry.walkTween = undefined;
-  entry.sprite.setScale(1);
-  entry.sprite.setAlpha(1);
-  entry.sprite.clearTint();
+  entry.view.sprite.setScale(1, 1);
+  entry.view.sprite.setAlpha(1);
+  entry.view.sprite.clearTint();
 };
 
 export const setWalk = (scene: Phaser.Scene, entry: TokenAnimEntry) => {
@@ -54,8 +45,9 @@ export const setWalk = (scene: Phaser.Scene, entry: TokenAnimEntry) => {
   }
   stopTween(entry.walkTween);
   entry.walkTween = scene.tweens.add({
-    targets: entry.sprite,
-    scale: WALK_SCALE,
+    targets: entry.view.sprite,
+    scaleX: WALK_SCALE_X,
+    scaleY: WALK_SCALE_Y,
     duration: WALK_DURATION,
     yoyo: true,
     repeat: -1,
@@ -65,9 +57,9 @@ export const setWalk = (scene: Phaser.Scene, entry: TokenAnimEntry) => {
 
 export const playAttack = (scene: Phaser.Scene, entry: TokenAnimEntry, onComplete: () => void) => {
   stopTween(entry.stateTween);
-  entry.sprite.setScale(1);
+  entry.view.sprite.setScale(1, 1);
   entry.stateTween = scene.tweens.add({
-    targets: entry.sprite,
+    targets: entry.view.sprite,
     scale: ATTACK_SCALE,
     duration: 140,
     yoyo: true,
@@ -78,13 +70,13 @@ export const playAttack = (scene: Phaser.Scene, entry: TokenAnimEntry, onComplet
 
 export const playCast = (scene: Phaser.Scene, entry: TokenAnimEntry, onComplete: () => void) => {
   stopTween(entry.stateTween);
-  entry.sprite.setTint(CAST_COLOR);
-  const circle = scene.add.circle(entry.sprite.x, entry.sprite.y + 8, 18, CAST_COLOR, 0.3);
-  circle.setDepth(entry.sprite.depth - 1);
+  entry.view.sprite.setTint(CAST_COLOR);
+  const circle = scene.add.circle(entry.view.sprite.x, entry.view.sprite.y + 10, 20, CAST_COLOR, 0.28);
+  circle.setDepth(entry.view.sprite.depth - 1);
   entry.castCircle = circle;
   entry.stateTween = scene.tweens.add({
-    targets: [entry.sprite, circle],
-    scale: { from: 1, to: 1.1 },
+    targets: [entry.view.sprite, circle],
+    scale: { from: 1, to: 1.08 },
     alpha: { from: 0.9, to: 0.2 },
     duration: 360,
     yoyo: true,
@@ -92,7 +84,7 @@ export const playCast = (scene: Phaser.Scene, entry: TokenAnimEntry, onComplete:
     onComplete: () => {
       circle.destroy();
       entry.castCircle = undefined;
-      entry.sprite.clearTint();
+      entry.view.sprite.clearTint();
       onComplete();
     }
   });
@@ -100,16 +92,16 @@ export const playCast = (scene: Phaser.Scene, entry: TokenAnimEntry, onComplete:
 
 export const playHit = (scene: Phaser.Scene, entry: TokenAnimEntry, onComplete: () => void) => {
   stopTween(entry.stateTween);
-  entry.sprite.setTint(HIT_COLOR);
+  entry.view.sprite.setTint(HIT_COLOR);
   entry.stateTween = scene.tweens.add({
-    targets: entry.sprite,
+    targets: entry.view.sprite,
     alpha: { from: 1, to: 0.4 },
     duration: 120,
     yoyo: true,
     repeat: 1,
     onComplete: () => {
-      entry.sprite.clearTint();
-      entry.sprite.setAlpha(1);
+      entry.view.sprite.clearTint();
+      entry.view.sprite.setAlpha(1);
       onComplete();
     }
   });

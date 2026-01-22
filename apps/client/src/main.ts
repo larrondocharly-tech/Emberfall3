@@ -41,6 +41,7 @@ import { resolveSpell } from "./vtt/spells/spellResolver";
 import { renderOverlayCells } from "./vtt/overlays/overlayLayer";
 import { playExplosionFx, playFireBoltFx, playHealFx, playThunderFx } from "./vtt/animations/spellFx";
 import { TokenRenderer } from "./vtt/render/tokenRenderer";
+import { loadTokenAssets } from "./vtt/render/tokenAssets";
 
 const WORLD_WIDTH = 1024;
 const WORLD_HEIGHT = 768;
@@ -2530,6 +2531,10 @@ class GameScene extends Phaser.Scene {
     super("GameScene");
   }
 
+  preload() {
+    loadTokenAssets(this);
+  }
+
   create() {
     this.createTilemap();
 
@@ -2593,9 +2598,14 @@ class GameScene extends Phaser.Scene {
     const obstacles = Array.isArray(state.obstacles) ? state.obstacles : [];
     const tokens = state.tokens ?? {};
     this.renderObstacles(obstacles);
-    this.tokenRenderer?.render(tokens);
+    const combat = state.combat as CombatStateSchema;
+    this.tokenRenderer?.render(tokens, {
+      selectedTokenId,
+      hoveredTokenId,
+      activeTokenId: combat.active ? combat.activeTokenId : null
+    });
     this.renderGrid();
-    this.renderCombatGrid(state.combat as CombatStateSchema);
+    this.renderCombatGrid(combat);
   }
 
   private createTilemap() {
