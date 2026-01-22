@@ -515,6 +515,10 @@
         background: rgba(56, 189, 248, 0.15);
         border-color: rgba(56, 189, 248, 0.7);
       }
+      .vtt-range-cell.spell-area {
+        background: rgba(59, 130, 246, 0.3);
+        border-color: rgba(59, 130, 246, 0.8);
+      }
       .vtt-surface-cell {
         position: absolute;
         border-radius: 6px;
@@ -532,23 +536,64 @@
       }
       .vtt-token {
         position: absolute;
-        border-radius: 999px;
-        background: radial-gradient(circle at 30% 30%, #7dd3fc, #0ea5e9 60%, #0369a1);
-        border: 2px solid rgba(15, 23, 42, 0.8);
-        box-shadow: 0 0 12px rgba(14, 165, 233, 0.55);
-        transform: translate(-50%, -50%);
+        transform: translate(0, 0);
         cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        pointer-events: auto;
+      }
+      .vtt-token-shadow {
+        position: absolute;
+        width: 60%;
+        height: 22%;
+        left: 50%;
+        top: 58%;
+        transform: translate(-50%, -50%);
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.45);
+        filter: blur(2px);
+      }
+      .vtt-token-sprite {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%) translateY(12%) scaleX(var(--sprite-flip, 1));
+        pointer-events: none;
+        image-rendering: pixelated;
+      }
+      .vtt-token-ring {
+        position: absolute;
+        width: 70%;
+        height: 28%;
+        left: 50%;
+        top: 62%;
+        transform: translate(-50%, -50%);
+        border-radius: 999px;
+        border: 2px solid rgba(251, 191, 36, 0.8);
+        opacity: 0;
+      }
+      .vtt-token-hover {
+        position: absolute;
+        width: 72%;
+        height: 86%;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        border-radius: 12px;
+        border: 2px solid rgba(56, 189, 248, 0.8);
+        opacity: 0;
+        pointer-events: none;
       }
       .vtt-token.selected {
-        outline: 2px solid #fbbf24;
-        box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.35);
+        z-index: 2;
+      }
+      .vtt-token.selected .vtt-token-ring {
+        opacity: 1;
       }
       .vtt-token.active-turn {
-        outline: 2px solid #22c55e;
-        box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.35);
+        z-index: 3;
+      }
+      .vtt-token.active-turn .vtt-token-ring {
+        opacity: 1;
+        border-color: rgba(34, 197, 94, 0.9);
       }
       .vtt-token.locked {
         opacity: 0.6;
@@ -558,14 +603,16 @@
         opacity: 0.5;
       }
       .vtt-token.vtt-token-target {
-        box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.5);
+        outline: 1px dashed rgba(14, 165, 233, 0.6);
       }
       .vtt-token.vtt-token-target.out-of-range {
-        outline: 2px dashed rgba(248, 113, 113, 0.8);
         filter: grayscale(0.6);
       }
       .vtt-token.vtt-token-target.hovered {
         outline: 2px solid rgba(34, 197, 94, 0.9);
+      }
+      .vtt-token.hovered .vtt-token-hover {
+        opacity: 1;
       }
       .vtt-token-label {
         position: absolute;
@@ -595,6 +642,54 @@
         display: block;
         height: 100%;
         background: linear-gradient(90deg, #22c55e, #16a34a);
+      }
+      .vtt-fx-layer {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 10;
+      }
+      .vtt-fx-impact,
+      .vtt-fx-projectile,
+      .vtt-fx-aoe,
+      .vtt-fx-heal,
+      .vtt-fx-heal-particle {
+        position: absolute;
+        left: 0;
+        top: 0;
+        transform: translate(-50%, -50%);
+        border-radius: 999px;
+        pointer-events: none;
+      }
+      .vtt-fx-impact {
+        width: 24px;
+        height: 24px;
+        background: rgba(250, 204, 21, 0.7);
+        box-shadow: 0 0 16px rgba(250, 204, 21, 0.7);
+      }
+      .vtt-fx-projectile {
+        width: 12px;
+        height: 12px;
+        background: rgba(249, 115, 22, 0.9);
+        box-shadow: 0 0 12px rgba(249, 115, 22, 0.8);
+      }
+      .vtt-fx-aoe {
+        width: 36px;
+        height: 36px;
+        background: rgba(56, 189, 248, 0.45);
+        box-shadow: 0 0 18px rgba(56, 189, 248, 0.6);
+      }
+      .vtt-fx-heal {
+        width: 28px;
+        height: 28px;
+        background: rgba(34, 197, 94, 0.5);
+        box-shadow: 0 0 18px rgba(34, 197, 94, 0.6);
+      }
+      .vtt-fx-heal-particle {
+        width: 6px;
+        height: 6px;
+        background: rgba(134, 239, 172, 0.9);
+        box-shadow: 0 0 8px rgba(134, 239, 172, 0.8);
       }
       .vtt-ping {
         position: absolute;
