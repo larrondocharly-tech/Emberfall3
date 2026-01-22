@@ -1617,13 +1617,21 @@ function hasInventoryItem(itemId: string) {
   return (items[itemId] ?? 0) > 0;
 }
 
-function goToScene(sceneId: string) {
+function goToScene(sceneId: string, options: { spawn?: { x: number; y: number } } = {}) {
   const scene = scenes.find((entry) => entry.id === sceneId);
   if (!scene) {
     return;
   }
-  applyScene(scene, { resetCamera: true, recenterToken: true });
+  const shouldRecenter = options.spawn ? false : true;
+  applyScene(scene, { resetCamera: true, recenterToken: shouldRecenter });
   setSessionSceneId(scene.id);
+  if (options.spawn) {
+    const playerToken = getTokenById("player");
+    if (playerToken) {
+      updateTokenPosition(playerToken.id, options.spawn);
+      selectToken(playerToken.id);
+    }
+  }
   renderScenesPanel();
 }
 
@@ -1634,41 +1642,44 @@ function setSessionSceneId(sceneId: string) {
   if (gameState.session) {
     gameState = { ...gameState, session: { ...gameState.session, sceneId } };
   }
+  if (lastAutoTransitionSceneId !== sceneId) {
+    lastAutoTransitionSceneId = null;
+  }
 }
 
 function getCurrentSceneId() {
   return activeSession?.sceneId ?? gameState.scene.id;
 }
 
-function loadScene(sceneId: string, spawn?: { x: number; y: number }) {
-  const scene = scenes.find((entry) => entry.id === sceneId);
-  if (!scene) {
-    return;
-  }
-  applyScene(scene, { resetCamera: true });
-  setSessionSceneId(scene.id);
-  if (spawn) {
-    const playerToken = getTokenById(selectedTokenId) ?? getTokenById("player");
-    if (playerToken) {
-      updateTokenPosition(playerToken.id, spawn);
-      selectToken(playerToken.id);
-    }
-  }
-  renderScenesPanel();
+function getCurrentSession() {
+  return activeSession ?? gameState.session;
 }
 
-function checkSceneTransition(playerToken: { gridX: number; gridY: number }) {
+function checkAutomaticSceneTransition(playerToken: GameToken, session: Session | null) {
+  if (!session || session.sceneId !== "tavern") {
+    return;
+  }
   const currentSceneId = getCurrentSceneId();
-  const transition = SCENE_TRANSITIONS.find(
-    (entry) =>
-      entry.fromSceneId === currentSceneId &&
-      entry.at.x === playerToken.gridX &&
-      entry.at.y === playerToken.gridY
-  );
+  if (currentSceneId !== session.sceneId) {
+    return;
+  }
+  if (lastAutoTransitionSceneId === session.sceneId) {
+    return;
+  }
+  const gridX = playerToken.x;
+  const gridY = playerToken.y;
+  const transition = SCENE_TRANSITIONS.find((entry) => {
+    return entry.fromSceneId === session.sceneId && entry.atX === gridX && entry.atY === gridY;
+  });
   if (!transition) {
     return;
   }
-  loadScene(transition.toSceneId, transition.spawn);
+  lastAutoTransitionSceneId = session.sceneId;
+  const spawn =
+    transition.spawnX !== undefined && transition.spawnY !== undefined
+      ? { x: transition.spawnX, y: transition.spawnY }
+      : undefined;
+  goToScene(transition.toSceneId, spawn ? { spawn } : undefined);
 }
 
 function tryExitThroughHotspot(hotspot: ExitHotspot) {
@@ -2499,8 +2510,8 @@ function setGameView(session: Session) {
               }
               applySurfaceToToken(targetToken.id);
               const updatedToken = getTokenById(targetToken.id);
-              if (updatedToken?.type === "player") {
-                checkSceneTransition({ gridX: updatedToken.x, gridY: updatedToken.y });
+              if (updatedToken?.type === "player" && updatedToken.id === "player") {
+                checkAutomaticSceneTransition(updatedToken, getCurrentSession());
               }
               selectToken(targetToken.id);
               renderGameGrid();
@@ -2667,8 +2678,8 @@ function setGameView(session: Session) {
           }
           applySurfaceToToken(draggingTokenId);
           const movedToken = getTokenById(draggingTokenId);
-          if (movedToken?.type === "player") {
-            checkSceneTransition({ gridX: movedToken.x, gridY: movedToken.y });
+          if (movedToken?.type === "player" && movedToken.id === "player") {
+            checkAutomaticSceneTransition(movedToken, getCurrentSession());
           }
           draggingTokenId = null;
           draggingTokenStart = null;
@@ -2727,6 +2738,7 @@ function setGameView(session: Session) {
   hud.style.display = "none";
   chat.style.display = "none";
   combatPanel.style.display = "none";
+  setSessionSceneId(gameState.scene.id);
   applyScene(gameState.scene);
 }
 
@@ -2891,9 +2903,11 @@ let spellMenuRef: HTMLDivElement | null = null;
 let spellButtonRef: HTMLButtonElement | null = null;
 type SceneTransition = {
   fromSceneId: string;
-  at: { x: number; y: number };
+  atX: number;
+  atY: number;
   toSceneId: string;
-  spawn: { x: number; y: number };
+  spawnX?: number;
+  spawnY?: number;
 };
 type ExitHotspot = {
   id: string;
@@ -2910,9 +2924,11 @@ type ExitHotspot = {
 const SCENE_TRANSITIONS: SceneTransition[] = [
   {
     fromSceneId: "tavern",
-    at: { x: 9, y: 2 },
+    atX: 11,
+    atY: 7,
     toSceneId: "tavern_upstairs",
-    spawn: { x: 5, y: 9 }
+    spawnX: 5,
+    spawnY: 9
   }
 ];
 
@@ -2980,6 +2996,7 @@ let combatState = {
 };
 let combatEnded = false;
 let isAITurnRunning = false;
+let lastAutoTransitionSceneId: string | null = null;
 
 class GameScene extends Phaser.Scene {
   private gridGraphics?: Phaser.GameObjects.Graphics;
