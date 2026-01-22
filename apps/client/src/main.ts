@@ -29,6 +29,7 @@ import { createSurfaceStore } from "./vtt/effects/surfaces";
 import { createStatusStore } from "./vtt/effects/statuses";
 import { getSpellById, spellbook } from "./vtt/effects/spellbook";
 import type { Spell, SpellId } from "./vtt/effects/spellbook";
+import { TokenRenderer } from "./vtt/render/tokenRenderer";
 
 const WORLD_WIDTH = 1024;
 const WORLD_HEIGHT = 768;
@@ -563,15 +564,38 @@ function requestSimpleAction(kind: "spells" | "items") {
     return;
   }
   if (kind === "spells") {
-    const currentMode = modeMachine.getMode();
-    if (currentMode === "spellMenu" || currentMode === "spellTarget") {
-      modeMachine.setMode("idle");
-      return;
-    }
-    modeMachine.setMode("spellMenu");
+    toggleSpellMenu();
     return;
   }
   appendChatMessage("Objets: à venir.");
+}
+
+function openSpellMenu() {
+  if (!spellMenuRef) {
+    return;
+  }
+  isSpellMenuOpen = true;
+  spellMenuRef.classList.add("open");
+}
+
+function closeSpellMenu(options?: { preserveMode?: boolean }) {
+  if (!spellMenuRef) {
+    return;
+  }
+  isSpellMenuOpen = false;
+  spellMenuRef.classList.remove("open");
+  if (!options?.preserveMode && modeMachine.getMode() === "spellMenu") {
+    modeMachine.setMode("idle");
+  }
+}
+
+function toggleSpellMenu() {
+  if (isSpellMenuOpen) {
+    closeSpellMenu();
+    return;
+  }
+  modeMachine.setMode("spellMenu");
+  openSpellMenu();
 }
 
 function startCombat() {
@@ -822,6 +846,8 @@ function handleAttackTarget(targetId: string) {
     return;
   }
   const result = resolveAttack(attacker, target);
+  const scene = game.scene.getScene("GameScene") as GameScene;
+  scene?.playTokenAttack(attacker.id);
   const rollText = `${result.roll} + ${attacker.attackBonus} = ${result.total}`;
   const outcome = result.hit ? "HIT" : "MISS";
   appendChatMessage(
@@ -842,6 +868,7 @@ function handleAttackTarget(targetId: string) {
     if (activeSession) {
       renderActorsPanel(activeSession);
     }
+    scene?.playTokenHit(target.id);
   }
   if (turnContext.combatStarted) {
     spendTokenAction(attacker.id);
@@ -965,6 +992,8 @@ function castSpell(spell: Spell, cell: { x: number; y: number }, targetId: strin
     showActionWarning("Aucune cible valide.", "no-target");
     return;
   }
+  const scene = game.scene.getScene("GameScene") as GameScene;
+  scene?.playTokenCast(caster.id);
 
   if (spell.id === "FIRE_BOLT" && targetToken) {
     playProjectileEffect(getGridCellCenter(caster), getGridCellCenter(targetToken), 0xef4444);
@@ -979,6 +1008,7 @@ function castSpell(spell: Spell, cell: { x: number; y: number }, targetId: strin
     applyDamage(targetToken, damage);
     statusStore.addStatus(targetToken.id, "burning", 2);
     appendChatMessage(`${caster.name} lance Fire Bolt sur ${targetToken.name} (${damage} dégâts).`);
+    scene?.playTokenHit(targetToken.id);
   }
 
   if (spell.id === "HEAL" && targetToken) {
@@ -1003,6 +1033,7 @@ function castSpell(spell: Spell, cell: { x: number; y: number }, targetId: strin
       }
       applyDamage(token, damage);
       statusStore.addStatus(token.id, "shocked", 1);
+      scene?.playTokenHit(token.id);
     });
     let hasWater = false;
     for (let dx = -radius; dx <= radius; dx += 1) {
@@ -1034,21 +1065,25 @@ function renderSpellMenu() {
     const button = document.createElement("button");
     button.type = "button";
     button.innerHTML = `<span>${spell.name}</span><span>PO ${spell.range}</span>`;
-    button.addEventListener("click", () => {
-      const caster = getSpellCaster();
-      if (!caster) {
-        showActionWarning("Aucun lanceur disponible.", "no-caster");
-        return;
-      }
-      selectedSpellId = spell.id;
-      updateSpellRange(caster, spell.range);
-      modeMachine.setMode("spellTarget");
-      if (combatHud) {
-        combatHud.spellMenu.classList.remove("open");
-      }
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      selectSpell(spell);
     });
     combatHud.spellList.appendChild(button);
   });
+}
+
+function selectSpell(spell: Spell) {
+  const caster = getSpellCaster();
+  if (!caster) {
+    showActionWarning("Aucun lanceur disponible.", "no-caster");
+    return;
+  }
+  selectedSpellId = spell.id;
+  updateSpellRange(caster, spell.range);
+  modeMachine.setMode("spellTarget");
+  closeSpellMenu({ preserveMode: true });
 }
 
 function setActiveTool(tool: Tool) {
@@ -1233,9 +1268,7 @@ function clearRangeOverlays() {
 
 function clearSpellSelection() {
   selectedSpellId = null;
-  if (combatHud) {
-    combatHud.spellMenu.classList.remove("open");
-  }
+  closeSpellMenu({ preserveMode: true });
 }
 
 function handleModeChange(next: "idle" | "movePreview" | "attackSelect" | "spellMenu" | "spellTarget") {
@@ -1252,8 +1285,10 @@ function handleModeChange(next: "idle" | "movePreview" | "attackSelect" | "spell
   if (next !== "spellMenu" && next !== "spellTarget") {
     clearSpellSelection();
   }
-  if (next === "spellMenu" && combatHud) {
-    combatHud.spellMenu.classList.add("open");
+  if (next === "spellMenu") {
+    openSpellMenu();
+  } else if (isSpellMenuOpen) {
+    closeSpellMenu({ preserveMode: true });
   }
   if (next === "idle") {
     hoveredTokenId = null;
@@ -1841,7 +1876,42 @@ function setGameView(session: Session) {
       combatHud.endTurnButton.addEventListener("click", () => {
         endTurn();
       });
-      renderSpellMenu();
+    renderSpellMenu();
+    spellMenuRef = combatHud.spellMenu;
+    spellButtonRef = combatHud.spellsButton;
+    if (spellMenuRef) {
+      spellMenuRef.style.pointerEvents = "auto";
+    }
+    if (spellButtonRef) {
+      spellButtonRef.style.pointerEvents = "auto";
+    }
+    if (!spellMenuListenersReady) {
+      spellMenuListenersReady = true;
+        combatHud.spellMenu.addEventListener("pointerdown", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        });
+        combatHud.spellsButton.addEventListener("pointerdown", (event) => {
+          event.stopPropagation();
+        });
+        document.addEventListener(
+          "pointerdown",
+          (event) => {
+            if (!isSpellMenuOpen || !spellMenuRef || !spellButtonRef) {
+              return;
+            }
+            const target = event.target as Node | null;
+            if (!target) {
+              return;
+            }
+            if (spellMenuRef.contains(target) || spellButtonRef.contains(target)) {
+              return;
+            }
+            closeSpellMenu();
+          },
+          true
+        );
+      }
     }
 
     setActiveTool(activeTool);
@@ -2344,6 +2414,10 @@ let movementPreviewPath: Array<{ x: number; y: number }> = [];
 let attackRangeCells = new Set<string>();
 let spellRangeCells = new Set<string>();
 let selectedSpellId: SpellId | null = null;
+let isSpellMenuOpen = false;
+let spellMenuListenersReady = false;
+let spellMenuRef: HTMLDivElement | null = null;
+let spellButtonRef: HTMLButtonElement | null = null;
 const surfaceStore = createSurfaceStore();
 const statusStore = createStatusStore();
 const modeMachine = createModeMachine("idle", handleModeChange);
@@ -2384,8 +2458,7 @@ let combatEnded = false;
 let isAITurnRunning = false;
 
 class GameScene extends Phaser.Scene {
-  private tokenSprites = new Map<string, Phaser.GameObjects.Arc>();
-  private nameLabels = new Map<string, Phaser.GameObjects.Text>();
+  private tokenRenderer?: TokenRenderer;
   private gridGraphics?: Phaser.GameObjects.Graphics;
   private combatGridGraphics?: Phaser.GameObjects.Graphics;
   private obstacleGraphics?: Phaser.GameObjects.Graphics;
@@ -2402,6 +2475,7 @@ class GameScene extends Phaser.Scene {
     this.gridGraphics = this.add.graphics();
     this.combatGridGraphics = this.add.graphics();
     this.obstacleGraphics = this.add.graphics();
+    this.tokenRenderer = new TokenRenderer(this);
 
     this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
       lastPointer = { x: pointer.worldX, y: pointer.worldY };
@@ -2458,7 +2532,7 @@ class GameScene extends Phaser.Scene {
     const obstacles = Array.isArray(state.obstacles) ? state.obstacles : [];
     const tokens = state.tokens ?? {};
     this.renderObstacles(obstacles);
-    this.renderTokens(tokens);
+    this.tokenRenderer?.render(tokens);
     this.renderGrid();
     this.renderCombatGrid(state.combat as CombatStateSchema);
   }
@@ -2521,33 +2595,16 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  private renderTokens(tokens: Record<string, TokenSchema>) {
-    Object.entries(tokens).forEach(([id, token]) => {
-      let sprite = this.tokenSprites.get(id);
-      let label = this.nameLabels.get(id);
-      const color = token.type === "monster" ? 0xef4444 : id === getOwnTokenId() ? 0x38bdf8 : 0x22c55e;
-      if (!sprite) {
-        sprite = this.add.circle(token.x, token.y, 18, color);
-        label = this.add.text(token.x, token.y - 26, token.name, {
-          color: "#f8fafc",
-          fontSize: "12px"
-        });
-        this.tokenSprites.set(id, sprite);
-        this.nameLabels.set(id, label);
-      }
-      sprite.setPosition(token.x, token.y);
-      sprite.setFillStyle(color, 1);
-      label?.setPosition(token.x - (label?.width ?? 0) / 2, token.y - 32);
-    });
+  playTokenAttack(tokenId: string) {
+    this.tokenRenderer?.setAnimState(tokenId, "attack");
+  }
 
-    Array.from(this.tokenSprites.keys()).forEach((id) => {
-      if (!tokens[id]) {
-        this.tokenSprites.get(id)?.destroy();
-        this.nameLabels.get(id)?.destroy();
-        this.tokenSprites.delete(id);
-        this.nameLabels.delete(id);
-      }
-    });
+  playTokenCast(tokenId: string) {
+    this.tokenRenderer?.setAnimState(tokenId, "cast");
+  }
+
+  playTokenHit(tokenId: string) {
+    this.tokenRenderer?.setAnimState(tokenId, "hit");
   }
 
   private renderObstacles(obstacles: ObstacleSchema[]) {
@@ -2852,6 +2909,9 @@ window.addEventListener("keydown", (event) => {
     isSpacePressed = true;
   }
   if (event.key === "Escape") {
+    if (isSpellMenuOpen) {
+      closeSpellMenu();
+    }
     if (attackState || modeMachine.getMode() !== "idle") {
       modeMachine.setMode("idle");
     }
