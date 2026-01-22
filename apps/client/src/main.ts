@@ -834,33 +834,7 @@ function toggleSpellMenu() {
   openSpellMenu();
 }
 
-function openSpellMenu() {
-  if (!spellMenuRef) {
-    return;
-  }
-  isSpellMenuOpen = true;
-  spellMenuRef.classList.add("open");
-}
 
-function closeSpellMenu(options?: { preserveMode?: boolean }) {
-  if (!spellMenuRef) {
-    return;
-  }
-  isSpellMenuOpen = false;
-  spellMenuRef.classList.remove("open");
-  if (!options?.preserveMode && modeMachine.getMode() === "spell_menu") {
-    modeMachine.setMode("idle");
-  }
-}
-
-function toggleSpellMenu() {
-  if (isSpellMenuOpen) {
-    closeSpellMenu();
-    return;
-  }
-  modeMachine.setMode("spell_menu");
-  openSpellMenu();
-}
 
 function startCombat() {
   if (!combatState.enabled || combatState.started) {
