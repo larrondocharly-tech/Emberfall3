@@ -842,16 +842,6 @@ function openSpellMenu() {
   spellMenuRef.classList.add("open");
 }
 
-function toggleSpellMenu() {
-  if (isSpellMenuOpen) {
-    closeSpellMenu();
-    return;
-  }
-  modeMachine.setMode("spell_menu");
-  openSpellMenu();
-}
-
-
 function startCombat() {
   if (!combatState.enabled || combatState.started) {
     return;
@@ -2831,9 +2821,6 @@ let questFlags: Record<string, boolean> = {};
 
 const adapter: GameAdapter = FEATURE_MULTIPLAYER ? createNetworkAdapter() : createLocalAdapter();
 let gameState = initialState;
-let inventoryState: InventoryState = defaultInventoryState;
-let inventoryFlags: Record<string, boolean> = {};
-let questFlags: Record<string, boolean> = {};
 const loadedSave = loadGameState();
 inventoryState = loadedSave.inventory ?? defaultInventoryState;
 inventoryFlags = loadedSave.flags ?? {};
