@@ -842,6 +842,92 @@ function toggleSpellMenu() {
   openSpellMenu();
 }
 
+function renderDialogueNode(node: DialogueNode) {
+  if (!dialogueSpeaker || !dialogueText || !dialogueChoices) {
+    return;
+  }
+  dialogueSpeaker.textContent = node.speaker;
+  dialogueText.textContent = node.text;
+  dialogueChoices.innerHTML = "";
+  node.choices.forEach((choice) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = choice.text;
+    button.addEventListener("click", () => {
+      applyDialogueChoice(choice);
+    });
+    dialogueChoices.appendChild(button);
+  });
+}
+
+function resolveGiveItemFlag(npcId: string, itemId: string) {
+  if (npcId === "npc_innkeeper" && itemId === "key_tavern") {
+    return "npc_innkeeper_gave_key";
+  }
+  return `${npcId}_gave_${itemId}`;
+}
+
+function applyDialogueChoice(choice: DialogueNode["choices"][number]) {
+  if (!activeDialogue || !activeNpc) {
+    return;
+  }
+  if (choice.giveItem) {
+    const flagKey = resolveGiveItemFlag(activeNpc.id, choice.giveItem);
+    if (!inventoryFlags[flagKey]) {
+      addItemToInventory(choice.giveItem, 1);
+      inventoryFlags = { ...inventoryFlags, [flagKey]: true };
+      persistSaveState();
+      const def = getItemDef(choice.giveItem);
+      appendSystemLog(`Vous recevez: ${def?.name ?? choice.giveItem}`);
+    } else {
+      appendSystemLog("Vous avez déjà reçu cet objet.");
+    }
+  }
+  if (choice.next) {
+    const next = getDialogueNode(choice.next);
+    if (next) {
+      activeDialogue = next;
+      renderDialogueNode(next);
+      return;
+    }
+  }
+  if (choice.startQuest) {
+    questFlags = { ...questFlags, [choice.startQuest]: true };
+    persistSaveState();
+    appendSystemLog("Nouvelle quête: Veiller sur la Frontière d'Ember.");
+  }
+  closeDialogue();
+}
+
+function openSpellMenu() {
+  if (!spellMenuRef) {
+    return;
+  }
+  isSpellMenuOpen = true;
+  spellMenuRef.classList.add("open");
+}
+
+function closeSpellMenu(options?: { preserveMode?: boolean }) {
+  if (!spellMenuRef) {
+    return;
+  }
+  isSpellMenuOpen = false;
+  spellMenuRef.classList.remove("open");
+  if (!options?.preserveMode && modeMachine.getMode() === "spell_menu") {
+    modeMachine.setMode("idle");
+  }
+}
+
+function toggleSpellMenu() {
+  if (isSpellMenuOpen) {
+    closeSpellMenu();
+    return;
+  }
+  modeMachine.setMode("spell_menu");
+  openSpellMenu();
+}
+
+
 function startCombat() {
   if (!combatState.enabled || combatState.started) {
     return;
@@ -1111,6 +1197,7 @@ function handleAttackTarget(targetId: string) {
     if (activeSession) {
       renderActorsPanel(activeSession);
     }
+    scene?.playTokenHit(target.id);
   }
   if (turnContext.combatStarted) {
     spendTokenAction(attacker.id);
@@ -2421,6 +2508,11 @@ function setGameView(session: Session) {
           }
           const coords = getGridCoordinates(event);
           if (coords) {
+            const hotspot = getExitHotspotAt(gameState.scene.id, coords);
+            if (hotspot) {
+              tryExitThroughHotspot(hotspot);
+              return;
+            }
             const targetToken = getTokenById(selectedTokenId) ?? getTokenById("player");
             if (targetToken) {
               const turnContext = getTurnContext();
@@ -2744,6 +2836,10 @@ const chatInput = document.getElementById("chatInput") as HTMLInputElement;
 const raceSelect = document.getElementById("raceSelect") as HTMLSelectElement;
 const classSelect = document.getElementById("classSelect") as HTMLSelectElement;
 
+let inventoryState: InventoryState = defaultInventoryState;
+let inventoryFlags: Record<string, boolean> = {};
+let questFlags: Record<string, boolean> = {};
+
 const adapter: GameAdapter = FEATURE_MULTIPLAYER ? createNetworkAdapter() : createLocalAdapter();
 let gameState = initialState;
 let inventoryState: InventoryState = defaultInventoryState;
@@ -2917,12 +3013,17 @@ class GameScene extends Phaser.Scene {
     super("GameScene");
   }
 
+  preload() {
+    preloadTokenAssets(this);
+  }
+
   create() {
     this.createTilemap();
 
     this.gridGraphics = this.add.graphics();
     this.combatGridGraphics = this.add.graphics();
     this.obstacleGraphics = this.add.graphics();
+    this.tokenSprites = new TokenSprites(this, TILE_SIZE);
 
     this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
       lastPointer = { x: pointer.worldX, y: pointer.worldY };
