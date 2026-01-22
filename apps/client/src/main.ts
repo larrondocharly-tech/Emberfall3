@@ -1967,8 +1967,11 @@ function setGameView(session: Session) {
     if (canvasViewport) {
       const handlePointerDown = (event: PointerEvent) => {
         const currentMode = modeMachine.getMode();
+        if (isSpellMenuOpen) {
+          return;
+        }
         if (event.button === 2) {
-          if (currentMode === "attackSelect" || currentMode === "spellTarget" || currentMode === "spellMenu") {
+          if (currentMode === "attackSelect" || currentMode === "spellTarget") {
             modeMachine.setMode("idle");
             return;
           }
@@ -2110,6 +2113,9 @@ function setGameView(session: Session) {
         }
       };
       const handlePointerMove = (event: PointerEvent) => {
+        if (isSpellMenuOpen) {
+          return;
+        }
         const currentMode = modeMachine.getMode();
         if (currentMode === "attackSelect" || currentMode === "spellTarget") {
           const tokenId = getTokenIdFromEvent(event);
@@ -2237,7 +2243,7 @@ function setGameView(session: Session) {
       canvasViewport.addEventListener("pointerup", handlePointerUp);
       canvasViewport.addEventListener("pointerleave", handlePointerUp);
       canvasViewport.addEventListener("pointerleave", () => {
-        if (hoveredGridCell || modeMachine.getMode() === "movePreview") {
+        if (!isSpellMenuOpen && (hoveredGridCell || modeMachine.getMode() === "movePreview")) {
           modeMachine.setMode("idle");
         }
       });
