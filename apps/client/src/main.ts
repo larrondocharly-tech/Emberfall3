@@ -1627,13 +1627,69 @@ function hasInventoryItem(itemId: string) {
   return (items[itemId] ?? 0) > 0;
 }
 
-function goToScene(sceneId: string) {
+function goToScene(sceneId: string, options: { spawn?: { x: number; y: number } } = {}) {
   const scene = scenes.find((entry) => entry.id === sceneId);
   if (!scene) {
     return;
   }
-  applyScene(scene, { resetCamera: true, recenterToken: true });
+  const shouldRecenter = options.spawn ? false : true;
+  applyScene(scene, { resetCamera: true, recenterToken: shouldRecenter });
+  setSessionSceneId(scene.id);
+  if (options.spawn) {
+    const playerToken = getTokenById("player");
+    if (playerToken) {
+      updateTokenPosition(playerToken.id, options.spawn);
+      selectToken(playerToken.id);
+    }
+  }
   renderScenesPanel();
+}
+
+function setSessionSceneId(sceneId: string) {
+  if (activeSession) {
+    activeSession = { ...activeSession, sceneId };
+  }
+  if (gameState.session) {
+    gameState = { ...gameState, session: { ...gameState.session, sceneId } };
+  }
+  if (lastAutoTransitionSceneId !== sceneId) {
+    lastAutoTransitionSceneId = null;
+  }
+}
+
+function getCurrentSceneId() {
+  return activeSession?.sceneId ?? gameState.scene.id;
+}
+
+function getCurrentSession() {
+  return activeSession ?? gameState.session;
+}
+
+function checkAutomaticSceneTransition(playerToken: GameToken, session: Session | null) {
+  if (!session || session.sceneId !== "tavern") {
+    return;
+  }
+  const currentSceneId = getCurrentSceneId();
+  if (currentSceneId !== session.sceneId) {
+    return;
+  }
+  if (lastAutoTransitionSceneId === session.sceneId) {
+    return;
+  }
+  const gridX = playerToken.x;
+  const gridY = playerToken.y;
+  const transition = SCENE_TRANSITIONS.find((entry) => {
+    return entry.fromSceneId === session.sceneId && entry.atX === gridX && entry.atY === gridY;
+  });
+  if (!transition) {
+    return;
+  }
+  lastAutoTransitionSceneId = session.sceneId;
+  const spawn =
+    transition.spawnX !== undefined && transition.spawnY !== undefined
+      ? { x: transition.spawnX, y: transition.spawnY }
+      : undefined;
+  goToScene(transition.toSceneId, spawn ? { spawn } : undefined);
 }
 
 function tryExitThroughHotspot(hotspot: ExitHotspot) {
@@ -2463,6 +2519,10 @@ function setGameView(session: Session) {
                 }
               }
               applySurfaceToToken(targetToken.id);
+              const updatedToken = getTokenById(targetToken.id);
+              if (updatedToken?.type === "player" && updatedToken.id === "player") {
+                checkAutomaticSceneTransition(updatedToken, getCurrentSession());
+              }
               selectToken(targetToken.id);
               renderGameGrid();
             }
@@ -2627,6 +2687,10 @@ function setGameView(session: Session) {
             }
           }
           applySurfaceToToken(draggingTokenId);
+          const movedToken = getTokenById(draggingTokenId);
+          if (movedToken?.type === "player" && movedToken.id === "player") {
+            checkAutomaticSceneTransition(movedToken, getCurrentSession());
+          }
           draggingTokenId = null;
           draggingTokenStart = null;
           canvasViewport?.releasePointerCapture(event.pointerId);
@@ -2684,6 +2748,7 @@ function setGameView(session: Session) {
   hud.style.display = "none";
   chat.style.display = "none";
   combatPanel.style.display = "none";
+  setSessionSceneId(gameState.scene.id);
   applyScene(gameState.scene);
 }
 
@@ -2849,6 +2914,14 @@ let isSpellMenuOpen = false;
 let spellMenuListenersReady = false;
 let spellMenuRef: HTMLDivElement | null = null;
 let spellButtonRef: HTMLButtonElement | null = null;
+type SceneTransition = {
+  fromSceneId: string;
+  atX: number;
+  atY: number;
+  toSceneId: string;
+  spawnX?: number;
+  spawnY?: number;
+};
 type ExitHotspot = {
   id: string;
   x: number;
@@ -2860,6 +2933,17 @@ type ExitHotspot = {
   lockedMessage?: string;
   okMessage?: string;
 };
+
+const SCENE_TRANSITIONS: SceneTransition[] = [
+  {
+    fromSceneId: "tavern",
+    atX: 11,
+    atY: 7,
+    toSceneId: "tavern_upstairs",
+    spawnX: 5,
+    spawnY: 9
+  }
+];
 
 const EXIT_HOTSPOTS: Record<string, ExitHotspot[]> = {
   tavern: [
@@ -2925,6 +3009,7 @@ let combatState = {
 };
 let combatEnded = false;
 let isAITurnRunning = false;
+let lastAutoTransitionSceneId: string | null = null;
 
 class GameScene extends Phaser.Scene {
   private gridGraphics?: Phaser.GameObjects.Graphics;
