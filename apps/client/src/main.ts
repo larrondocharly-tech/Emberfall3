@@ -834,6 +834,34 @@ function toggleSpellMenu() {
   openSpellMenu();
 }
 
+function openSpellMenu() {
+  if (!spellMenuRef) {
+    return;
+  }
+  isSpellMenuOpen = true;
+  spellMenuRef.classList.add("open");
+}
+
+function closeSpellMenu(options?: { preserveMode?: boolean }) {
+  if (!spellMenuRef) {
+    return;
+  }
+  isSpellMenuOpen = false;
+  spellMenuRef.classList.remove("open");
+  if (!options?.preserveMode && modeMachine.getMode() === "spell_menu") {
+    modeMachine.setMode("idle");
+  }
+}
+
+function toggleSpellMenu() {
+  if (isSpellMenuOpen) {
+    closeSpellMenu();
+    return;
+  }
+  modeMachine.setMode("spell_menu");
+  openSpellMenu();
+}
+
 function startCombat() {
   if (!combatState.enabled || combatState.started) {
     return;
@@ -1103,6 +1131,7 @@ function handleAttackTarget(targetId: string) {
     if (activeSession) {
       renderActorsPanel(activeSession);
     }
+    scene?.playTokenHit(target.id);
   }
   if (turnContext.combatStarted) {
     spendTokenAction(attacker.id);
@@ -2804,12 +2833,17 @@ class GameScene extends Phaser.Scene {
     super("GameScene");
   }
 
+  preload() {
+    preloadTokenAssets(this);
+  }
+
   create() {
     this.createTilemap();
 
     this.gridGraphics = this.add.graphics();
     this.combatGridGraphics = this.add.graphics();
     this.obstacleGraphics = this.add.graphics();
+    this.tokenSprites = new TokenSprites(this, TILE_SIZE);
 
     this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
       lastPointer = { x: pointer.worldX, y: pointer.worldY };
