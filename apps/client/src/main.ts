@@ -1597,6 +1597,50 @@ function getNearbyNpcToken() {
   return npcs.find((npc) => chebyshevDistance(player, npc) <= 1) ?? null;
 }
 
+function getExitHotspotAt(sceneId: string, cell: { x: number; y: number }) {
+  const hotspots = EXIT_HOTSPOTS[sceneId] ?? [];
+  return (
+    hotspots.find(
+      (spot) =>
+        cell.x >= spot.x &&
+        cell.x < spot.x + spot.width &&
+        cell.y >= spot.y &&
+        cell.y < spot.y + spot.height
+    ) ?? null
+  );
+}
+
+function hasInventoryItem(itemId: string) {
+  const items = inventoryState.items as Record<string, number> | Array<{ id: string; qty: number }>;
+  if (Array.isArray(items)) {
+    return items.some((entry) => entry.id === itemId && entry.qty > 0);
+  }
+  return (items[itemId] ?? 0) > 0;
+}
+
+function goToScene(sceneId: string) {
+  const scene = scenes.find((entry) => entry.id === sceneId);
+  if (!scene) {
+    return;
+  }
+  applyScene(scene, { resetCamera: true, recenterToken: true });
+  renderScenesPanel();
+}
+
+function tryExitThroughHotspot(hotspot: ExitHotspot) {
+  if (hotspot.requiresItemId && !hasInventoryItem(hotspot.requiresItemId)) {
+    const message = hotspot.lockedMessage ?? "La porte est verrouillée.";
+    appendChatMessage(message);
+    appendSystemLog(message);
+    return;
+  }
+  if (hotspot.okMessage) {
+    appendChatMessage(hotspot.okMessage);
+    appendSystemLog(hotspot.okMessage);
+  }
+  goToScene(hotspot.toSceneId);
+}
+
 function renderGameGrid() {
   if (!gamePosition || !canvasWorld) {
     return;
@@ -2346,6 +2390,11 @@ function setGameView(session: Session) {
           }
           const coords = getGridCoordinates(event);
           if (coords) {
+            const hotspot = getExitHotspotAt(gameState.scene.id, coords);
+            if (hotspot) {
+              tryExitThroughHotspot(hotspot);
+              return;
+            }
             const targetToken = getTokenById(selectedTokenId) ?? getTokenById("player");
             if (targetToken) {
               const turnContext = getTurnContext();
@@ -2675,14 +2724,11 @@ let questFlags: Record<string, boolean> = {};
 
 const adapter: GameAdapter = FEATURE_MULTIPLAYER ? createNetworkAdapter() : createLocalAdapter();
 let gameState = initialState;
-
 const loadedSave = loadGameState();
-inventoryState = loadedSave.inventory ?? defaultInventoryState;
-inventoryFlags = loadedSave.flags ?? {};
-questFlags = loadedSave.quests ?? {};
-
+inventoryState = loadedSave.inventory;
+inventoryFlags = loadedSave.flags;
+questFlags = loadedSave.quests;
 ensureNpcTokensForScene(gameState.scene.id);
-
 let room: Room<GameStateSchema> | null = null;
 let sessionId: string | null = null;
 let gridVisible = true;
@@ -2757,6 +2803,36 @@ let isSpellMenuOpen = false;
 let spellMenuListenersReady = false;
 let spellMenuRef: HTMLDivElement | null = null;
 let spellButtonRef: HTMLButtonElement | null = null;
+type ExitHotspot = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  toSceneId: string;
+  requiresItemId?: string;
+  lockedMessage?: string;
+  okMessage?: string;
+};
+
+const EXIT_HOTSPOTS: Record<string, ExitHotspot[]> = {
+  tavern: [
+    {
+      id: "tavern_exit_door",
+      x: 12,
+      y: 5,
+      width: 2,
+      height: 3,
+      toSceneId: "frontier",
+      requiresItemId: "key_tavern",
+      lockedMessage: "La porte est verrouillée. Il te faut la clé.",
+      okMessage: "Tu déverrouilles la porte et sors dans la nuit froide…"
+    }
+  ]
+};
+let inventoryState: InventoryState = defaultInventoryState;
+let inventoryFlags: Record<string, boolean> = {};
+let questFlags: Record<string, boolean> = {};
 let inventoryPanel: HTMLDivElement | null = null;
 let inventoryList: HTMLDivElement | null = null;
 let inventoryDetail: HTMLDivElement | null = null;
