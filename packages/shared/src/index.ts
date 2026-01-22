@@ -47,6 +47,48 @@ export interface QuestData {
   reward: string;
 }
 
+export type ItemDef = {
+  id: string;
+  name: string;
+  description: string;
+  icon?: string;
+  stackable: boolean;
+  rarity: "common" | "uncommon" | "rare" | "epic";
+};
+
+export type InventoryState = {
+  items: Record<string, number>;
+  equipment: {
+    weapon?: string;
+    armor?: string;
+    trinket?: string;
+  };
+};
+
+export type DialogueChoice = {
+  text: string;
+  next?: string;
+  giveItem?: string;
+  startQuest?: string;
+  end?: boolean;
+};
+
+export type DialogueNode = {
+  id: string;
+  speaker: string;
+  text: string;
+  choices: DialogueChoice[];
+};
+
+export type NpcDef = {
+  id: string;
+  name: string;
+  tokenType: "npc";
+  gridX: number;
+  gridY: number;
+  dialogueId: string;
+};
+
 export interface MapObstacle {
   id: string;
   x: number;
