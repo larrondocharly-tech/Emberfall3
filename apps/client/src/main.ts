@@ -27,8 +27,19 @@ import { createCombatHUD } from "./ui/vtt/CombatHUD";
 import { createModeMachine } from "./vtt/modeMachine";
 import { createSurfaceStore } from "./vtt/effects/surfaces";
 import { createStatusStore } from "./vtt/effects/statuses";
-import { getSpellById, spellbook } from "./vtt/effects/spellbook";
-import type { Spell, SpellId } from "./vtt/effects/spellbook";
+import { getSpellById, spellbook } from "./vtt/spells/spellbook";
+import type { SpellDefinition } from "./vtt/spells/spellbook";
+import {
+  createSpellTargetingState,
+  expandCells,
+  getAreaTargets,
+  isCellInRange,
+  updateSpellTargetingHover as computeSpellTargetingHover,
+  type SpellTargetingState
+} from "./vtt/spells/spellTargeting";
+import { resolveSpell } from "./vtt/spells/spellResolver";
+import { renderOverlayCells } from "./vtt/overlays/overlayLayer";
+import { playExplosionFx, playFireBoltFx, playHealFx, playThunderFx } from "./vtt/animations/spellFx";
 import { TokenRenderer } from "./vtt/render/tokenRenderer";
 
 const WORLD_WIDTH = 1024;
@@ -372,6 +383,12 @@ function spendTokenAction(tokenId: string) {
   }
 }
 
+function spendTokenActions(tokenId: string, cost: number) {
+  for (let i = 0; i < cost; i += 1) {
+    spendTokenAction(tokenId);
+  }
+}
+
 function spendTokenMovement(tokenId: string, cost: number) {
   updateTokenState(tokenId, (token) => ({
     ...token,
@@ -504,12 +521,20 @@ function updateCombatHUD() {
     actionTotal > 0 && actionRemaining === 0 ? "Actions épuisées" : "";
   combatHud.movementNotice.textContent =
     movementTotal > 0 && movementRemaining === 0 ? "Déplacement épuisé" : "";
+  const currentMode = modeMachine.getMode();
+  if (currentMode === "spell_targeting" && spellTargetingState) {
+    combatHud.actionNotice.textContent = `Ciblage : ${spellTargetingState.spell.name} (PO ${spellTargetingState.spell.range}) — Échap pour annuler`;
+  } else if (currentMode === "attack") {
+    combatHud.actionNotice.textContent = "Sélection d'une cible";
+  } else if (currentMode === "spell_menu") {
+    combatHud.actionNotice.textContent = "Choisissez un sort";
+  }
 
   combatHud.statusBadge.textContent = turnContext.isPlayerTurn ? "À TON TOUR" : "EN ATTENTE";
   combatHud.statusBadge.classList.toggle("active", turnContext.isPlayerTurn);
   combatHud.statusBadge.classList.toggle("waiting", !turnContext.isPlayerTurn);
 
-  combatHud.attackButton.disabled = !turnContext.isPlayerTurn || !canAct || modeMachine.getMode() === "attackSelect";
+  combatHud.attackButton.disabled = !turnContext.isPlayerTurn || !canAct || modeMachine.getMode() === "attack";
   combatHud.spellsButton.disabled = !turnContext.isPlayerTurn || !canAct;
   combatHud.itemsButton.disabled = !turnContext.isPlayerTurn || !canAct;
   combatHud.endTurnButton.disabled = false;
@@ -546,7 +571,7 @@ function requestAttack(attackerId: string) {
   }
   setAttackState(attackerId);
   updateAttackRange(attacker, 1);
-  modeMachine.setMode("attackSelect");
+  modeMachine.setMode("attack");
   appendChatMessage(`${attacker.name} choisit une cible...`);
 }
 
@@ -584,7 +609,7 @@ function closeSpellMenu(options?: { preserveMode?: boolean }) {
   }
   isSpellMenuOpen = false;
   spellMenuRef.classList.remove("open");
-  if (!options?.preserveMode && modeMachine.getMode() === "spellMenu") {
+  if (!options?.preserveMode && modeMachine.getMode() === "spell_menu") {
     modeMachine.setMode("idle");
   }
 }
@@ -594,7 +619,7 @@ function toggleSpellMenu() {
     closeSpellMenu();
     return;
   }
-  modeMachine.setMode("spellMenu");
+  modeMachine.setMode("spell_menu");
   openSpellMenu();
 }
 
@@ -813,7 +838,7 @@ function clearMeasure() {
 }
 
 function handleAttackTarget(targetId: string) {
-  if (!attackState || modeMachine.getMode() !== "attackSelect") {
+  if (!attackState || modeMachine.getMode() !== "attack") {
     return;
   }
   const turnContext = getTurnContext();
@@ -976,84 +1001,70 @@ function applyFireExplosion(center: { x: number; y: number }, radius: number) {
   appendChatMessage("Synergie : Explosion enflammée (huile).");
 }
 
-function castSpell(spell: Spell, cell: { x: number; y: number }, targetId: string | null) {
+function castSpell(spell: SpellDefinition, cell: { x: number; y: number }) {
   const turnContext = getTurnContext();
-  const caster = turnContext.activeToken;
+  const caster = getSpellCaster();
   if (!caster) {
     return;
   }
-  const targetToken = targetId ? getTokenById(targetId) : null;
-  const rangeKey = `${cell.x},${cell.y}`;
-  if (!spellRangeCells.has(rangeKey)) {
-    showActionWarning("Hors de portée.", "out-of-range");
+  if (
+    turnContext.combatStarted &&
+    (!turnContext.isPlayerTurn || (caster.actionsRemaining ?? 0) < spell.actionCost)
+  ) {
+    showActionWarning("Pas assez d'actions.", "no-action");
     return;
   }
-  if (spell.target !== "ground" && !targetToken) {
+  if (!spellTargetingState || !isCellInRange(spellTargetingState, cell)) {
+    showActionWarning("Hors portée.", "out-of-range");
+    return;
+  }
+  computeSpellTargetingHover(spellTargetingState, caster, cell, gridSize);
+  spellAreaCells = new Set(spellTargetingState.areaCells);
+  const targets = getTokensInSpellArea(spellTargetingState, spell);
+  if (spell.targeting === "enemy" && !targets.some((token) => !isAllyToken(caster, token))) {
+    showActionWarning("Aucune cible ennemie.", "no-enemy");
+    return;
+  }
+  if (spell.targeting === "ally" && !targets.some((token) => isAllyToken(caster, token))) {
+    showActionWarning("Aucune cible alliée.", "no-ally");
+    return;
+  }
+  if (spell.targeting !== "ground" && targets.length === 0) {
     showActionWarning("Aucune cible valide.", "no-target");
     return;
   }
-  const scene = game.scene.getScene("GameScene") as GameScene;
-  scene?.playTokenCast(caster.id);
-
-  if (spell.id === "FIRE_BOLT" && targetToken) {
-    playProjectileEffect(getGridCellCenter(caster), getGridCellCenter(targetToken), 0xef4444);
-    let damage = 4;
-    if (statusStore.hasStatus(targetToken.id, "oiled")) {
-      applyFireExplosion(targetToken, 1);
-      damage += 1;
-    }
-    if (surfaceStore.getSurface(targetToken.x, targetToken.y)?.type === "oil") {
-      applyFireExplosion(targetToken, 1);
-    }
-    applyDamage(targetToken, damage);
-    statusStore.addStatus(targetToken.id, "burning", 2);
-    appendChatMessage(`${caster.name} lance Fire Bolt sur ${targetToken.name} (${damage} dégâts).`);
-    scene?.playTokenHit(targetToken.id);
-  }
-
-  if (spell.id === "HEAL" && targetToken) {
-    if (!isAllyToken(caster, targetToken)) {
-      showActionWarning("Cible alliée requise.", "ally-only");
-      return;
-    }
-    playPulseEffect(getGridCellCenter(targetToken), 0x22c55e);
-    applyHealing(targetToken, 4);
-    appendChatMessage(`${caster.name} soigne ${targetToken.name}.`);
-  }
-
-  if (spell.id === "THUNDER") {
-    const radius = spell.areaRadius ?? 1;
-    playThunderEffect(getGridCellCenter(cell), 0x38bdf8);
-    const targets = getTokensInArea(cell, radius);
-    targets.forEach((token) => {
-      let damage = 3;
-      if (statusStore.hasStatus(token.id, "wet")) {
-        damage = Math.round(damage * 1.5);
-        appendChatMessage("Synergie : Électrocution amplifiée (Wet).");
+  resolveSpell({
+    spell,
+    caster,
+    targetCell: cell,
+    targets,
+    allTokens: gameState.tokens,
+    surfaceStore,
+    statusStore,
+    log: appendChatMessage,
+    applyDamage,
+    applyHealing,
+    playFx: (kind, from, to) => {
+      const scene = game.scene.getScene("GameScene") as GameScene;
+      if (!scene) {
+        return;
       }
-      applyDamage(token, damage);
-      statusStore.addStatus(token.id, "shocked", 1);
-      scene?.playTokenHit(token.id);
-    });
-    let hasWater = false;
-    for (let dx = -radius; dx <= radius; dx += 1) {
-      for (let dy = -radius; dy <= radius; dy += 1) {
-        if (surfaceStore.getSurface(cell.x + dx, cell.y + dy)?.type === "water") {
-          hasWater = true;
-        }
+      if (kind === "fire") {
+        playFireBoltFx(scene, from, to);
+        scene.playTokenCast(caster.id);
+      } else if (kind === "heal") {
+        playHealFx(scene, to);
+      } else if (kind === "electric") {
+        playThunderFx(scene, to);
+      } else {
+        playExplosionFx(scene, to);
       }
     }
-    if (hasWater) {
-      appendChatMessage("L'eau amplifie la décharge électrique.");
-    }
-  }
-
+  });
   if (turnContext.combatStarted) {
-    spendTokenAction(caster.id);
+    spendTokenActions(caster.id, spell.actionCost);
   }
-  modeMachine.setMode("idle");
-  updateCombatHUD();
-  renderGameGrid();
+  exitSpellTargeting();
 }
 
 function renderSpellMenu() {
@@ -1074,16 +1085,60 @@ function renderSpellMenu() {
   });
 }
 
-function selectSpell(spell: Spell) {
+function selectSpell(spell: SpellDefinition) {
   const caster = getSpellCaster();
   if (!caster) {
     showActionWarning("Aucun lanceur disponible.", "no-caster");
     return;
   }
   selectedSpellId = spell.id;
-  updateSpellRange(caster, spell.range);
-  modeMachine.setMode("spellTarget");
+  spellTargetingState = createSpellTargetingState(spell, caster.id, caster, gridSize);
+  spellRangeCells = new Set(spellTargetingState.rangeCells);
+  spellAreaCells = new Set();
+  modeMachine.setMode("spell_targeting");
   closeSpellMenu({ preserveMode: true });
+  updateSpellTargetingBanner(spell);
+  renderGameGrid();
+}
+
+function updateSpellTargetingBanner(spell: SpellDefinition) {
+  if (!combatHud) {
+    return;
+  }
+  combatHud.actionNotice.textContent = `Ciblage : ${spell.name} (PO ${spell.range}) — Échap pour annuler`;
+}
+
+function exitSpellTargeting() {
+  spellTargetingState = null;
+  selectedSpellId = null;
+  spellRangeCells = new Set();
+  spellAreaCells = new Set();
+  modeMachine.setMode("idle");
+  updateCombatHUD();
+  renderGameGrid();
+}
+
+function handleSpellTargetingHover(cell: { x: number; y: number } | null) {
+  if (!spellTargetingState) {
+    return;
+  }
+  const caster = getSpellCaster();
+  if (!caster) {
+    return;
+  }
+  computeSpellTargetingHover(spellTargetingState, caster, cell, gridSize);
+  spellAreaCells = new Set(spellTargetingState.areaCells);
+}
+
+function getTokensInSpellArea(state: SpellTargetingState, spell: SpellDefinition) {
+  const areaCells = getAreaTargets(state);
+  const tokens = gameState.tokens.filter((token) =>
+    areaCells.some((cell) => cell.x === token.x && cell.y === token.y)
+  );
+  if (spell.shape === "single") {
+    return tokens.filter((token) => token.x === state.hoverCell?.x && token.y === state.hoverCell?.y);
+  }
+  return tokens;
 }
 
 function setActiveTool(tool: Tool) {
@@ -1102,7 +1157,7 @@ function setActiveTool(tool: Tool) {
   if (canvasViewport) {
     const currentMode = modeMachine.getMode();
     const cursor =
-      currentMode === "attackSelect" || currentMode === "spellTarget"
+      currentMode === "attack" || currentMode === "spell_targeting"
         ? "crosshair"
         : tool === "pan"
           ? "grab"
@@ -1231,10 +1286,6 @@ function updateAttackRange(origin: { x: number; y: number }, range: number) {
   attackRangeCells = getReachableCells(origin, range);
 }
 
-function updateSpellRange(origin: { x: number; y: number }, range: number) {
-  spellRangeCells = getReachableCells(origin, range);
-}
-
 function showMovementWarning(message: string) {
   const now = Date.now();
   if (message === movementWarningMessage && now - movementWarningAt < 1200) {
@@ -1264,28 +1315,33 @@ function clearMovementPreview() {
 function clearRangeOverlays() {
   attackRangeCells = new Set();
   spellRangeCells = new Set();
+  spellAreaCells = new Set();
 }
 
 function clearSpellSelection() {
   selectedSpellId = null;
   closeSpellMenu({ preserveMode: true });
+  spellTargetingState = null;
+  spellAreaCells = new Set();
 }
 
-function handleModeChange(next: "idle" | "movePreview" | "attackSelect" | "spellMenu" | "spellTarget") {
-  if (next !== "movePreview") {
+function handleModeChange(next: "idle" | "move" | "attack" | "spell_menu" | "spell_targeting") {
+  if (next !== "move") {
     clearMovementPreview();
   }
-  if (next !== "attackSelect") {
+  if (next !== "attack") {
     attackState = null;
     attackRangeCells = new Set();
   }
-  if (next !== "spellTarget") {
+  if (next !== "spell_targeting") {
     spellRangeCells = new Set();
+    spellTargetingState = null;
+    spellAreaCells = new Set();
   }
-  if (next !== "spellMenu" && next !== "spellTarget") {
+  if (next !== "spell_menu" && next !== "spell_targeting") {
     clearSpellSelection();
   }
-  if (next === "spellMenu") {
+  if (next === "spell_menu") {
     openSpellMenu();
   } else if (isSpellMenuOpen) {
     closeSpellMenu({ preserveMode: true });
@@ -1330,10 +1386,6 @@ function tickTurnEffects() {
     }));
     appendChatMessage(`${activeToken.name} subit des dégâts de brûlure.`);
   }
-}
-
-function getManhattanDistance(a: { x: number; y: number }, b: { x: number; y: number }) {
-  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
 function isAllyToken(reference: GameToken, target: GameToken) {
@@ -1427,16 +1479,10 @@ function renderGameGrid() {
     rangeOverlayLayer?.appendChild(cell);
   });
 
-  spellRangeCells.forEach((key) => {
-    const [xStr, yStr] = key.split(",");
-    const cell = document.createElement("div");
-    cell.className = "vtt-range-cell spell";
-    cell.style.left = `${Number(xStr) * step + offsetX + 2}px`;
-    cell.style.top = `${Number(yStr) * step + offsetY + 2}px`;
-    cell.style.width = `${step - 4}px`;
-    cell.style.height = `${step - 4}px`;
-    rangeOverlayLayer?.appendChild(cell);
-  });
+  if (rangeOverlayLayer) {
+    renderOverlayCells(rangeOverlayLayer, expandCells(spellRangeCells), { step, offsetX, offsetY }, "vtt-range-cell spell");
+    renderOverlayCells(rangeOverlayLayer, expandCells(spellAreaCells), { step, offsetX, offsetY }, "vtt-range-cell spell-area", 4);
+  }
 
   canvasGridLayer.style.display = gridVisible ? "block" : "none";
   canvasGridLayer.style.backgroundImage =
@@ -1459,25 +1505,23 @@ function renderGameGrid() {
       const activeToken = getTurnContext().activeToken;
       const currentMode = modeMachine.getMode();
       if (activeToken && tokenData.id !== activeToken.id) {
-        if (currentMode === "attackSelect" && !isAllyToken(activeToken, tokenData)) {
+        if (currentMode === "attack" && !isAllyToken(activeToken, tokenData)) {
           token.classList.add("vtt-token-target");
           if (!attackRangeCells.has(`${tokenData.x},${tokenData.y}`)) {
             token.classList.add("out-of-range");
           }
         }
-        if (currentMode === "spellTarget" && selectedSpellId) {
-          const spell = getSpellById(selectedSpellId);
-          if (spell) {
-            const isAlly = isAllyToken(activeToken, tokenData);
-            const validTarget =
-              spell.target === "any" ||
-              (spell.target === "enemy" && !isAlly) ||
-              (spell.target === "ally" && isAlly);
-            if (validTarget) {
-              token.classList.add("vtt-token-target");
-              if (!spellRangeCells.has(`${tokenData.x},${tokenData.y}`)) {
-                token.classList.add("out-of-range");
-              }
+        if (currentMode === "spell_targeting" && spellTargetingState) {
+          const spell = spellTargetingState.spell;
+          const isAlly = isAllyToken(activeToken, tokenData);
+          const validTarget =
+            spell.targeting === "any" ||
+            (spell.targeting === "enemy" && !isAlly) ||
+            (spell.targeting === "ally" && isAlly);
+          if (validTarget) {
+            token.classList.add("vtt-token-target");
+            if (!spellRangeCells.has(`${tokenData.x},${tokenData.y}`)) {
+              token.classList.add("out-of-range");
             }
           }
         }
@@ -1971,12 +2015,16 @@ function setGameView(session: Session) {
           return;
         }
         if (event.button === 2) {
-          if (currentMode === "attackSelect" || currentMode === "spellTarget") {
+          if (currentMode === "attack") {
             modeMachine.setMode("idle");
             return;
           }
+          if (currentMode === "spell_targeting") {
+            exitSpellTargeting();
+            return;
+          }
         }
-        if (currentMode === "attackSelect" && event.button === 0) {
+        if (currentMode === "attack" && event.button === 0) {
           const targetId = getTokenIdFromEvent(event);
           if (targetId) {
             handleAttackTarget(targetId);
@@ -1985,7 +2033,7 @@ function setGameView(session: Session) {
           }
           return;
         }
-        if (currentMode === "spellTarget" && event.button === 0) {
+        if (currentMode === "spell_targeting" && event.button === 0) {
           const coords = getGridCoordinates(event);
           if (!coords || !selectedSpellId) {
             return;
@@ -1994,8 +2042,7 @@ function setGameView(session: Session) {
           if (!spell) {
             return;
           }
-          const targetId = getTokenIdFromEvent(event);
-          castSpell(spell, coords, targetId);
+          castSpell(spell, coords);
           return;
         }
         const isPanMode = activeTool === "pan" || isSpacePressed || event.button === 1;
@@ -2117,13 +2164,19 @@ function setGameView(session: Session) {
           return;
         }
         const currentMode = modeMachine.getMode();
-        if (currentMode === "attackSelect" || currentMode === "spellTarget") {
+        if (currentMode === "attack") {
           const tokenId = getTokenIdFromEvent(event);
           if (tokenId !== hoveredTokenId) {
             hoveredTokenId = tokenId;
             renderGameGrid();
             updateCombatHUD();
           }
+        }
+        if (currentMode === "spell_targeting") {
+          const coords = getGridCoordinates(event);
+          handleSpellTargetingHover(coords);
+          renderGameGrid();
+          return;
         }
         if (draggingTokenId && activeTool === "token") {
           const coords = getGridCoordinates(event);
@@ -2168,7 +2221,7 @@ function setGameView(session: Session) {
           return;
         }
 
-        if (currentMode === "attackSelect" || currentMode === "spellTarget") {
+        if (currentMode === "attack" || currentMode === "spell_targeting") {
           return;
         }
 
@@ -2180,19 +2233,19 @@ function setGameView(session: Session) {
             if (turnContext.isPlayerTurn) {
               updateMovementPreview(origin, coords, origin.movementRemaining ?? 0);
               hoveredGridCell = coords;
-              modeMachine.setMode("movePreview");
+              modeMachine.setMode("move");
               renderGameGrid();
-            } else if (currentMode === "movePreview") {
+            } else if (currentMode === "move") {
               modeMachine.setMode("idle");
             }
           } else {
             movementPreviewCells = [];
             movementPreviewPath = getPathCells(origin, coords);
             hoveredGridCell = coords;
-            modeMachine.setMode("movePreview");
+            modeMachine.setMode("move");
             renderGameGrid();
           }
-        } else if (currentMode === "movePreview") {
+        } else if (currentMode === "move") {
           modeMachine.setMode("idle");
         }
       };
@@ -2243,7 +2296,7 @@ function setGameView(session: Session) {
       canvasViewport.addEventListener("pointerup", handlePointerUp);
       canvasViewport.addEventListener("pointerleave", handlePointerUp);
       canvasViewport.addEventListener("pointerleave", () => {
-        if (!isSpellMenuOpen && (hoveredGridCell || modeMachine.getMode() === "movePreview")) {
+        if (!isSpellMenuOpen && (hoveredGridCell || modeMachine.getMode() === "move")) {
           modeMachine.setMode("idle");
         }
       });
@@ -2419,7 +2472,9 @@ let movementPreviewCells: Array<{ x: number; y: number }> = [];
 let movementPreviewPath: Array<{ x: number; y: number }> = [];
 let attackRangeCells = new Set<string>();
 let spellRangeCells = new Set<string>();
-let selectedSpellId: SpellId | null = null;
+let selectedSpellId: SpellDefinition["id"] | null = null;
+let spellTargetingState: SpellTargetingState | null = null;
+let spellAreaCells = new Set<string>();
 let isSpellMenuOpen = false;
 let spellMenuListenersReady = false;
 let spellMenuRef: HTMLDivElement | null = null;
@@ -2917,6 +2972,10 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     if (isSpellMenuOpen) {
       closeSpellMenu();
+    }
+    if (modeMachine.getMode() === "spell_targeting") {
+      exitSpellTargeting();
+      return;
     }
     if (attackState || modeMachine.getMode() !== "idle") {
       modeMachine.setMode("idle");
