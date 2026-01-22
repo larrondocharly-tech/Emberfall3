@@ -842,16 +842,6 @@ function toggleSpellMenu() {
   openSpellMenu();
 }
 
-function toggleSpellMenu() {
-  if (isSpellMenuOpen) {
-    closeSpellMenu();
-    return;
-  }
-  modeMachine.setMode("spell_menu");
-  openSpellMenu();
-}
-
-
 
 function startCombat() {
   if (!combatState.enabled || combatState.started) {
