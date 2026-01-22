@@ -39,9 +39,8 @@ import {
 } from "./vtt/spells/spellTargeting";
 import { resolveSpell } from "./vtt/spells/spellResolver";
 import { renderOverlayCells } from "./vtt/overlays/overlayLayer";
-import { playExplosionFx, playFireBoltFx, playHealFx, playThunderFx } from "./vtt/animations/spellFx";
-import { TokenRenderer } from "./vtt/render/tokenRenderer";
-import { loadTokenAssets } from "./vtt/render/tokenAssets";
+import { TokenSprites } from "./vtt/render/tokenSprites";
+import { preloadTokenAssets } from "./vtt/render/tokenAssetResolver";
 
 const WORLD_WIDTH = 1024;
 const WORLD_HEIGHT = 768;
@@ -873,7 +872,7 @@ function handleAttackTarget(targetId: string) {
   }
   const result = resolveAttack(attacker, target);
   const scene = game.scene.getScene("GameScene") as GameScene;
-  scene?.playTokenAttack(attacker.id);
+  scene?.playTokenAttack(attacker.id, { x: target.x, y: target.y });
   const rollText = `${result.roll} + ${attacker.attackBonus} = ${result.total}`;
   const outcome = result.hit ? "HIT" : "MISS";
   appendChatMessage(
@@ -1051,14 +1050,14 @@ function castSpell(spell: SpellDefinition, cell: { x: number; y: number }) {
         return;
       }
       if (kind === "fire") {
-        playFireBoltFx(scene, from, to);
+        scene.playFireBolt(from, to);
         scene.playTokenCast(caster.id);
       } else if (kind === "heal") {
-        playHealFx(scene, to);
+        scene.playHeal(to);
       } else if (kind === "electric") {
-        playThunderFx(scene, to);
+        scene.playThunder(to);
       } else {
-        playExplosionFx(scene, to);
+        scene.playExplosion(to);
       }
     }
   });
@@ -2520,7 +2519,7 @@ let combatEnded = false;
 let isAITurnRunning = false;
 
 class GameScene extends Phaser.Scene {
-  private tokenRenderer?: TokenRenderer;
+  private tokenSprites?: TokenSprites;
   private gridGraphics?: Phaser.GameObjects.Graphics;
   private combatGridGraphics?: Phaser.GameObjects.Graphics;
   private obstacleGraphics?: Phaser.GameObjects.Graphics;
@@ -2532,7 +2531,7 @@ class GameScene extends Phaser.Scene {
   }
 
   preload() {
-    loadTokenAssets(this);
+    preloadTokenAssets(this);
   }
 
   create() {
@@ -2541,7 +2540,7 @@ class GameScene extends Phaser.Scene {
     this.gridGraphics = this.add.graphics();
     this.combatGridGraphics = this.add.graphics();
     this.obstacleGraphics = this.add.graphics();
-    this.tokenRenderer = new TokenRenderer(this);
+    this.tokenSprites = new TokenSprites(this, TILE_SIZE);
 
     this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
       lastPointer = { x: pointer.worldX, y: pointer.worldY };
@@ -2599,7 +2598,7 @@ class GameScene extends Phaser.Scene {
     const tokens = state.tokens ?? {};
     this.renderObstacles(obstacles);
     const combat = state.combat as CombatStateSchema;
-    this.tokenRenderer?.render(tokens, {
+    this.tokenSprites?.render(tokens, {
       selectedTokenId,
       hoveredTokenId,
       activeTokenId: combat.active ? combat.activeTokenId : null
@@ -2666,16 +2665,32 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  playTokenAttack(tokenId: string) {
-    this.tokenRenderer?.setAnimState(tokenId, "attack");
+  playTokenAttack(tokenId: string, target: { x: number; y: number }) {
+    this.tokenSprites?.animateAttack(tokenId, target);
   }
 
   playTokenCast(tokenId: string) {
-    this.tokenRenderer?.setAnimState(tokenId, "cast");
+    this.tokenSprites?.animateCast(tokenId);
   }
 
   playTokenHit(tokenId: string) {
-    this.tokenRenderer?.setAnimState(tokenId, "hit");
+    this.tokenSprites?.animateHit(tokenId);
+  }
+
+  playFireBolt(from: { x: number; y: number }, to: { x: number; y: number }) {
+    this.tokenSprites?.playFireBolt(from, to);
+  }
+
+  playThunder(at: { x: number; y: number }) {
+    this.tokenSprites?.playThunder(at);
+  }
+
+  playHeal(at: { x: number; y: number }) {
+    this.tokenSprites?.playHeal(at);
+  }
+
+  playExplosion(at: { x: number; y: number }) {
+    this.tokenSprites?.playExplosion(at);
   }
 
   private renderObstacles(obstacles: ObstacleSchema[]) {
