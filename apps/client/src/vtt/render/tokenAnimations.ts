@@ -13,6 +13,7 @@ type TokenElementEntry = {
 type AnimationHandle = {
   movement?: Animation;
   bob?: Animation;
+  idle?: Animation;
 };
 
 const createImpactFlash = (layer: HTMLDivElement, x: number, y: number, className: string) => {
@@ -54,6 +55,10 @@ export const animateMove = (
 
   handles.movement?.cancel();
   handles.bob?.cancel();
+  if (handles.idle) {
+    handles.idle.cancel();
+    handles.idle = undefined;
+  }
 
   handles.movement = entry.root.animate(
     [
@@ -68,14 +73,32 @@ export const animateMove = (
 
   handles.bob = entry.sprite.animate(
     [
-      { transform: "translate(-50%, -50%) translateY(12%) scale(1)", opacity: 1 },
-      { transform: "translate(-50%, -50%) translateY(8%) scale(1.04)", opacity: 1 }
+      { transform: "translate(-50%, -50%) translateY(12%) scaleX(var(--sprite-flip)) scale(1) rotate(0deg)" },
+      { transform: "translate(-50%, -50%) translateY(8%) scaleX(var(--sprite-flip)) scale(1.04) rotate(-2deg)" }
     ],
     {
       duration: 200,
       easing: "ease-in-out",
       direction: "alternate",
       iterations: Math.max(1, Math.ceil(duration / 200))
+    }
+  );
+};
+
+export const ensureIdleBreath = (entry: TokenElementEntry, handles: AnimationHandle) => {
+  if (handles.idle) {
+    return;
+  }
+  handles.idle = entry.sprite.animate(
+    [
+      { transform: "translate(-50%, -50%) translateY(12%) scaleX(var(--sprite-flip)) scaleY(1)" },
+      { transform: "translate(-50%, -50%) translateY(12%) scaleX(var(--sprite-flip)) scaleY(1.02)" }
+    ],
+    {
+      duration: 1500,
+      easing: "ease-in-out",
+      direction: "alternate",
+      iterations: Infinity
     }
   );
 };
@@ -194,14 +217,40 @@ export const playHealFX = (
   const animation = heal.animate(
     [
       { transform: "translate(-50%, -50%) scale(0.8)", opacity: 0.7 },
+      { transform: "translate(-50%, -50%) scale(1.6)", opacity: 0.4 },
       { transform: "translate(-50%, -50%) scale(2.2)", opacity: 0 }
     ],
     {
-      duration: 420,
-      easing: "ease-out"
+      duration: 450,
+      easing: "ease-out",
+      iterations: 2
     }
   );
   animation.onfinish = () => heal.remove();
+
+  const particleCount = 6;
+  for (let i = 0; i < particleCount; i += 1) {
+    const particle = document.createElement("div");
+    particle.className = "vtt-fx-heal-particle";
+    const angle = (Math.PI * 2 * i) / particleCount;
+    const radius = 10 + Math.random() * 6;
+    const startX = center.x + Math.cos(angle) * radius;
+    const startY = center.y + Math.sin(angle) * radius;
+    particle.style.left = `${startX}px`;
+    particle.style.top = `${startY}px`;
+    layer.appendChild(particle);
+    const particleAnim = particle.animate(
+      [
+        { transform: "translate(-50%, -50%) scale(1)", opacity: 0.8 },
+        { transform: "translate(-50%, -90%) scale(0.6)", opacity: 0 }
+      ],
+      {
+        duration: 450,
+        easing: "ease-out"
+      }
+    );
+    particleAnim.onfinish = () => particle.remove();
+  }
 };
 
 export const createFxLayer = (parent: HTMLDivElement) => {

@@ -555,7 +555,7 @@
         position: absolute;
         left: 50%;
         top: 50%;
-        transform: translate(-50%, -50%) translateY(12%);
+        transform: translate(-50%, -50%) translateY(12%) scaleX(var(--sprite-flip, 1));
         pointer-events: none;
         image-rendering: pixelated;
       }
@@ -652,7 +652,8 @@
       .vtt-fx-impact,
       .vtt-fx-projectile,
       .vtt-fx-aoe,
-      .vtt-fx-heal {
+      .vtt-fx-heal,
+      .vtt-fx-heal-particle {
         position: absolute;
         left: 0;
         top: 0;
@@ -683,6 +684,12 @@
         height: 28px;
         background: rgba(34, 197, 94, 0.5);
         box-shadow: 0 0 18px rgba(34, 197, 94, 0.6);
+      }
+      .vtt-fx-heal-particle {
+        width: 6px;
+        height: 6px;
+        background: rgba(134, 239, 172, 0.9);
+        box-shadow: 0 0 8px rgba(134, 239, 172, 0.8);
       }
       .vtt-ping {
         position: absolute;

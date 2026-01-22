@@ -921,11 +921,11 @@ function playAOEFX(cells: Array<{ x: number; y: number }>) {
   tokenSpriteRenderer.playAOEFX(cells, getGridMetrics());
 }
 
-function playHealFX(targetCell: { x: number; y: number }) {
+function playHealFX(targetId: string) {
   if (!tokenSpriteRenderer) {
     return;
   }
-  tokenSpriteRenderer.playHealFX(targetCell, getGridMetrics());
+  tokenSpriteRenderer.playHealFX(targetId, getGridMetrics());
 }
 
 function getTokensInArea(center: { x: number; y: number }, radius: number) {
@@ -1018,7 +1018,9 @@ function castSpell(spell: SpellDefinition, cell: { x: number; y: number }) {
       if (kind === "fire") {
         playProjectileFX(from, to);
       } else if (kind === "heal") {
-        playHealFX(to);
+        targets.forEach((target) => {
+          playHealFX(target.id);
+        });
       } else if (kind === "electric") {
         const cells = spellTargetingState ? getAreaTargets(spellTargetingState) : [to];
         playAOEFX(cells);
