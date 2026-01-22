@@ -1,18 +1,15 @@
-import Phaser from "phaser";
 import {
-  animateAttack,
-  animateCast,
-  animateHit,
   animateMove,
-  playExplosionFx,
-  playFireBoltFx,
-  playHealFx,
-  playThunderFx,
-  positionTokenView,
-  type TokenAnimationEntry,
-  type TokenAnimationView
+  createFxLayer,
+  playAOEFX,
+  playHealFX,
+  playMeleeAttackFX,
+  playProjectileFX,
+  type AnimationHandle,
+  type GridMetrics,
+  type TokenElementEntry
 } from "./tokenAnimations";
-import { getTokenFallbackColor, resolveTokenTextureKey } from "./tokenAssetResolver";
+import { getTokenAccentColor, getTokenPlaceholderUrl, resolveTokenUrl } from "./tokenAssetResolver";
 
 type TokenRenderSchema = {
   id: string;
@@ -24,234 +21,166 @@ type TokenRenderSchema = {
   maxHp: number;
 };
 
-type TokenSpriteEntry = TokenAnimationEntry & {
-  lastX: number;
-  lastY: number;
-  targetX: number;
-  targetY: number;
-  isMoving: boolean;
+type TokenRenderFlags = {
+  selected: boolean;
+  ko: boolean;
+  targetable: boolean;
+  outOfRange: boolean;
+  hovered: boolean;
+  activeTurn: boolean;
+  locked: boolean;
+  showLabel: boolean;
 };
 
-type TokenRenderOptions = {
-  selectedTokenId?: string | null;
-  hoveredTokenId?: string | null;
-  activeTokenId?: string | null;
+type TokenSpriteEntry = TokenElementEntry & {
+  label: HTMLDivElement;
+  hpFill?: HTMLSpanElement;
+  ring: HTMLDivElement;
+  hover: HTMLDivElement;
+  animations: AnimationHandle;
+  lastCell: { x: number; y: number };
 };
 
-const DEPTH_BASE = 1000;
 const SPRITE_SCALE_RATIO = 0.85;
 
-const createShadow = (scene: Phaser.Scene, tileSize: number) => {
-  const shadow = scene.add.graphics();
-  shadow.fillStyle(0x0b0f1a, 0.4);
-  shadow.fillEllipse(0, 0, tileSize * 0.5, tileSize * 0.18);
-  return shadow;
-};
+export class TokenSpriteRenderer {
+  private container: HTMLDivElement;
+  private fxLayer: HTMLDivElement;
+  private tokens = new Map<string, TokenSpriteEntry>();
 
-const createRing = (scene: Phaser.Scene, tileSize: number, color: number, lineWidth: number, alpha: number) => {
-  const ring = scene.add.graphics();
-  ring.lineStyle(lineWidth, color, alpha);
-  ring.strokeEllipse(0, 0, tileSize * 0.7, tileSize * 0.28);
-  return ring;
-};
-
-const createHoverOutline = (scene: Phaser.Scene, tileSize: number, color: number) => {
-  const outline = scene.add.graphics();
-  outline.lineStyle(2, color, 0.6);
-  outline.strokeRoundedRect(-tileSize * 0.36, -tileSize * 0.5, tileSize * 0.72, tileSize * 0.85, 8);
-  return outline;
-};
-
-const createHpBar = (scene: Phaser.Scene) => scene.add.graphics();
-
-const updateHpBar = (bar: Phaser.GameObjects.Graphics, token: TokenRenderSchema) => {
-  bar.clear();
-  const width = 40;
-  const height = 5;
-  const ratio = token.maxHp > 0 ? token.hp / token.maxHp : 0;
-  bar.fillStyle(0x0f172a, 0.7);
-  bar.fillRoundedRect(-width / 2, 0, width, height, 2);
-  bar.fillStyle(0x22c55e, 0.9);
-  bar.fillRoundedRect(-width / 2, 0, width * Math.max(0, Math.min(1, ratio)), height, 2);
-};
-
-const createTokenView = (scene: Phaser.Scene, token: TokenRenderSchema, tileSize: number): TokenAnimationView => {
-  const textureKey = resolveTokenTextureKey(scene, token.type);
-  const sprite = scene.add.sprite(token.x, token.y, textureKey);
-  sprite.setDisplaySize(tileSize * SPRITE_SCALE_RATIO, tileSize * SPRITE_SCALE_RATIO);
-  sprite.setOrigin(0.5, 0.9);
-  sprite.disableInteractive();
-
-  const shadow = createShadow(scene, tileSize);
-  const label = scene.add.text(token.x, token.y, "", {
-    color: "#f8fafc",
-    fontSize: "12px"
-  });
-  label.setOrigin(0.5, 1);
-
-  const selectionRing = createRing(scene, tileSize, 0x38bdf8, 2, 0.8);
-  const activeHalo = createRing(scene, tileSize, 0xfacc15, 3, 0.7);
-  const hoverOutline = createHoverOutline(scene, tileSize, getTokenFallbackColor(token.type));
-  const hpBar = createHpBar(scene);
-
-  selectionRing.setVisible(false);
-  activeHalo.setVisible(false);
-  hoverOutline.setVisible(false);
-
-  return {
-    sprite,
-    shadow,
-    label,
-    selectionRing,
-    activeHalo,
-    hoverOutline,
-    hpBar
-  };
-};
-
-const updateDepth = (view: TokenAnimationView, y: number) => {
-  const depth = DEPTH_BASE + y;
-  view.shadow.setDepth(depth - 2);
-  view.selectionRing?.setDepth(depth - 1);
-  view.activeHalo?.setDepth(depth - 1);
-  view.sprite.setDepth(depth);
-  view.hoverOutline?.setDepth(depth + 1);
-  view.label.setDepth(depth + 2);
-  view.hpBar?.setDepth(depth + 2);
-};
-
-const updateIndicators = (
-  view: TokenAnimationView,
-  token: TokenRenderSchema,
-  options: TokenRenderOptions,
-  isMoving: boolean
-) => {
-  const isSelected = options.selectedTokenId === token.id;
-  const isActive = options.activeTokenId === token.id;
-  const isHovered = options.hoveredTokenId === token.id;
-  view.selectionRing?.setVisible(isSelected && !isMoving);
-  view.activeHalo?.setVisible(isActive);
-  view.hoverOutline?.setVisible(isHovered);
-};
-
-export class TokenSprites {
-  private scene: Phaser.Scene;
-  private tileSize: number;
-  private fxLayer: Phaser.GameObjects.Container;
-  private tokenSprites = new Map<string, TokenSpriteEntry>();
-
-  constructor(scene: Phaser.Scene, tileSize: number) {
-    this.scene = scene;
-    this.tileSize = tileSize;
-    this.fxLayer = scene.add.container(0, 0);
-    this.fxLayer.setDepth(DEPTH_BASE + 2000);
+  constructor(container: HTMLDivElement, overlayLayer: HTMLDivElement) {
+    this.container = container;
+    this.fxLayer = createFxLayer(overlayLayer);
   }
 
-  render(tokens: Record<string, TokenRenderSchema>, options: TokenRenderOptions = {}) {
-    Object.entries(tokens).forEach(([id, token]) => {
-      let entry = this.tokenSprites.get(id);
-      if (!entry) {
-        const view = createTokenView(this.scene, token, this.tileSize);
-        entry = {
-          view,
-          displayX: token.x,
-          displayY: token.y,
-          lastX: token.x,
-          lastY: token.y,
-          targetX: token.x,
-          targetY: token.y,
-          isMoving: false
-        };
-        this.tokenSprites.set(id, entry);
-        positionTokenView(entry.view, token.x, token.y, this.tileSize);
-        updateDepth(entry.view, token.y);
+  renderToken(token: TokenRenderSchema, flags: TokenRenderFlags, metrics: GridMetrics) {
+    let entry = this.tokens.get(token.id);
+    if (!entry) {
+      const root = document.createElement("div");
+      root.className = "vtt-token";
+      root.dataset.tokenId = token.id;
+
+      const shadow = document.createElement("div");
+      shadow.className = "vtt-token-shadow";
+
+      const ring = document.createElement("div");
+      ring.className = "vtt-token-ring";
+
+      const hover = document.createElement("div");
+      hover.className = "vtt-token-hover";
+      hover.style.borderColor = getTokenAccentColor(token.type);
+
+      const sprite = document.createElement("img");
+      sprite.className = "vtt-token-sprite";
+      sprite.alt = token.name;
+      sprite.src = getTokenPlaceholderUrl(token.type);
+      sprite.draggable = false;
+
+      const label = document.createElement("div");
+      label.className = "vtt-token-label";
+
+      root.appendChild(shadow);
+      root.appendChild(ring);
+      root.appendChild(hover);
+      root.appendChild(sprite);
+      root.appendChild(label);
+
+      this.container.appendChild(root);
+
+      entry = {
+        root,
+        sprite,
+        shadow,
+        label,
+        ring,
+        hover,
+        animations: {},
+        lastCell: { x: token.x, y: token.y }
+      };
+      this.tokens.set(token.id, entry);
+
+      resolveTokenUrl(token.type).then((url) => {
+        sprite.src = url;
+      });
+    }
+
+    const size = metrics.step;
+    entry.root.style.width = `${size}px`;
+    entry.root.style.height = `${size}px`;
+    entry.root.style.left = `${token.x * metrics.step + metrics.offsetX}px`;
+    entry.root.style.top = `${token.y * metrics.step + metrics.offsetY}px`;
+    entry.root.style.setProperty("--token-size", `${size}px`);
+    entry.root.style.zIndex = String(1000 + token.y);
+    entry.root.dataset.gridX = String(token.x);
+    entry.root.dataset.gridY = String(token.y);
+    entry.sprite.style.width = `${SPRITE_SCALE_RATIO * 100}%`;
+    entry.sprite.style.height = `${SPRITE_SCALE_RATIO * 100}%`;
+
+    entry.root.classList.toggle("selected", flags.selected);
+    entry.root.classList.toggle("ko", flags.ko);
+    entry.root.classList.toggle("vtt-token-target", flags.targetable);
+    entry.root.classList.toggle("out-of-range", flags.outOfRange);
+    entry.root.classList.toggle("hovered", flags.hovered);
+    entry.root.classList.toggle("active-turn", flags.activeTurn);
+    entry.root.classList.toggle("locked", flags.locked);
+
+    entry.label.textContent = flags.showLabel
+      ? flags.ko
+        ? "KO"
+        : `${token.name} ${token.hp}/${token.maxHp}`
+      : "";
+    if (flags.showLabel) {
+      const hpBar = entry.label.querySelector<HTMLDivElement>(".vtt-token-hp");
+      if (!hpBar) {
+        const bar = document.createElement("div");
+        bar.className = "vtt-token-hp";
+        const fill = document.createElement("span");
+        bar.appendChild(fill);
+        entry.label.appendChild(bar);
+        entry.hpFill = fill;
       }
+    }
+    if (entry.hpFill) {
+      const ratio = token.maxHp > 0 ? token.hp / token.maxHp : 0;
+      entry.hpFill.style.width = `${Math.max(0, Math.min(1, ratio)) * 100}%`;
+    }
 
-      if (token.x !== entry.targetX || token.y !== entry.targetY) {
-        const from = { x: entry.displayX, y: entry.displayY };
-        const to = { x: token.x, y: token.y };
-        const distance = Math.hypot(to.x - from.x, to.y - from.y);
-        const duration = Math.max(180, Math.min(420, (distance / this.tileSize) * 200 + 140));
-        entry.isMoving = true;
-        animateMove(this.scene, entry, from, to, duration, this.tileSize);
-        entry.targetX = token.x;
-        entry.targetY = token.y;
-        this.scene.time.delayedCall(duration, () => {
-          entry.isMoving = false;
-        });
-      } else if (!entry.isMoving) {
-        entry.displayX = token.x;
-        entry.displayY = token.y;
-        positionTokenView(entry.view, token.x, token.y, this.tileSize);
-      }
+    if (token.x !== entry.lastCell.x || token.y !== entry.lastCell.y) {
+      const duration = 260;
+      animateMove(entry, entry.lastCell, { x: token.x, y: token.y }, metrics, duration, entry.animations);
+      entry.lastCell = { x: token.x, y: token.y };
+    }
+  }
 
-      updateDepth(entry.view, entry.displayY);
-      updateIndicators(entry.view, token, options, entry.isMoving);
-
-      entry.view.label.setText(`${token.name} ${token.hp}/${token.maxHp}`);
-      if (entry.view.hpBar) {
-        updateHpBar(entry.view.hpBar, token);
-      }
-
-      entry.lastX = token.x;
-      entry.lastY = token.y;
-    });
-
-    Array.from(this.tokenSprites.keys()).forEach((id) => {
-      if (!tokens[id]) {
-        const entry = this.tokenSprites.get(id);
+  cleanup(tokenIds: Set<string>) {
+    Array.from(this.tokens.keys()).forEach((id) => {
+      if (!tokenIds.has(id)) {
+        const entry = this.tokens.get(id);
         if (entry) {
-          entry.view.sprite.destroy();
-          entry.view.shadow.destroy();
-          entry.view.label.destroy();
-          entry.view.hpBar?.destroy();
-          entry.view.selectionRing?.destroy();
-          entry.view.activeHalo?.destroy();
-          entry.view.hoverOutline?.destroy();
-          entry.castCircle?.destroy();
+          entry.root.remove();
         }
-        this.tokenSprites.delete(id);
+        this.tokens.delete(id);
       }
     });
   }
 
-  animateAttack(tokenId: string, target: { x: number; y: number }) {
-    const entry = this.tokenSprites.get(tokenId);
+  playMeleeAttackFX(attackerId: string, targetCell: { x: number; y: number }, metrics: GridMetrics) {
+    const entry = this.tokens.get(attackerId);
     if (!entry) {
       return;
     }
-    animateAttack(this.scene, entry, target, this.tileSize, this.fxLayer);
+    playMeleeAttackFX(entry, targetCell, metrics, this.fxLayer);
   }
 
-  animateCast(tokenId: string) {
-    const entry = this.tokenSprites.get(tokenId);
-    if (!entry) {
-      return;
-    }
-    animateCast(this.scene, entry);
+  playProjectileFX(attackerCell: { x: number; y: number }, targetCell: { x: number; y: number }, metrics: GridMetrics) {
+    playProjectileFX(attackerCell, targetCell, metrics, this.fxLayer);
   }
 
-  animateHit(tokenId: string) {
-    const entry = this.tokenSprites.get(tokenId);
-    if (!entry) {
-      return;
-    }
-    animateHit(this.scene, entry);
+  playAOEFX(cells: Array<{ x: number; y: number }>, metrics: GridMetrics) {
+    playAOEFX(cells, metrics, this.fxLayer);
   }
 
-  playFireBolt(from: { x: number; y: number }, to: { x: number; y: number }) {
-    playFireBoltFx(this.scene, this.fxLayer, from, to);
-  }
-
-  playThunder(at: { x: number; y: number }) {
-    playThunderFx(this.scene, this.fxLayer, at, this.tileSize * 0.35);
-  }
-
-  playHeal(at: { x: number; y: number }) {
-    playHealFx(this.scene, this.fxLayer, at);
-  }
-
-  playExplosion(at: { x: number; y: number }) {
-    playExplosionFx(this.scene, this.fxLayer, at);
+  playHealFX(cell: { x: number; y: number }, metrics: GridMetrics) {
+    playHealFX(cell, metrics, this.fxLayer);
   }
 }

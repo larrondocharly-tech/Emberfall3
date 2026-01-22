@@ -1,76 +1,93 @@
-import Phaser from "phaser";
+type TokenAssetInfo = {
+  baseName: string;
+  color: string;
+};
 
-const TOKEN_TEXTURE_SIZE = 64;
-
-const tokenAssetMap = {
+const tokenAssetMap: Record<string, TokenAssetInfo> = {
   player: {
     baseName: "hero",
-    color: 0x38bdf8
+    color: "#38bdf8"
   },
   monster: {
     baseName: "monster",
-    color: 0xef4444
+    color: "#ef4444"
   },
   npc: {
     baseName: "npc",
-    color: 0x22c55e
+    color: "#22c55e"
   }
-};
-
-type TokenAssetInfo = {
-  baseName: string;
-  color: number;
 };
 
 const resolveTokenAsset = (tokenType: string): TokenAssetInfo =>
-  tokenAssetMap[tokenType as keyof typeof tokenAssetMap] ?? tokenAssetMap.npc;
+  tokenAssetMap[tokenType] ?? tokenAssetMap.npc;
+
+const resolvedUrlCache = new Map<string, string>();
+const resolvingCache = new Map<string, Promise<string>>();
 
 const buildTokenUrl = (baseName: string, suffix: "png" | "png.jpg") =>
-  `assets/tokens/${baseName}.${suffix}`;
+  `/assets/tokens/${baseName}.${suffix}`;
 
-const buildTextureKey = (baseName: string, variant: "png" | "png.jpg") =>
-  variant === "png" ? baseName : `${baseName}-jpg`;
-
-export const preloadTokenAssets = (scene: Phaser.Scene) => {
-  Object.values(tokenAssetMap).forEach((asset) => {
-    const pngKey = buildTextureKey(asset.baseName, "png");
-    const jpgKey = buildTextureKey(asset.baseName, "png.jpg");
-    if (!scene.textures.exists(pngKey)) {
-      scene.load.image(pngKey, buildTokenUrl(asset.baseName, "png"));
-    }
-    if (!scene.textures.exists(jpgKey)) {
-      scene.load.image(jpgKey, buildTokenUrl(asset.baseName, "png.jpg"));
-    }
+const loadImage = (url: string) =>
+  new Promise<boolean>((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+    img.src = url;
   });
-};
 
-const ensurePlaceholderTexture = (scene: Phaser.Scene, key: string, color: number) => {
-  if (scene.textures.exists(key)) {
-    return;
+const createPlaceholderDataUrl = (color: string) => {
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return "";
   }
-  const graphics = scene.add.graphics();
-  graphics.fillStyle(0x0f172a, 0.9);
-  graphics.fillRoundedRect(4, 4, TOKEN_TEXTURE_SIZE - 8, TOKEN_TEXTURE_SIZE - 8, 12);
-  graphics.lineStyle(2, color, 1);
-  graphics.strokeRoundedRect(4, 4, TOKEN_TEXTURE_SIZE - 8, TOKEN_TEXTURE_SIZE - 8, 12);
-  graphics.fillStyle(color, 0.9);
-  graphics.fillTriangle(16, 48, TOKEN_TEXTURE_SIZE / 2, 14, TOKEN_TEXTURE_SIZE - 16, 48);
-  graphics.generateTexture(key, TOKEN_TEXTURE_SIZE, TOKEN_TEXTURE_SIZE);
-  graphics.destroy();
+  context.fillStyle = "#0f172a";
+  context.fillRect(0, 0, 64, 64);
+  context.strokeStyle = color;
+  context.lineWidth = 3;
+  context.strokeRect(6, 6, 52, 52);
+  context.fillStyle = color;
+  context.beginPath();
+  context.moveTo(16, 48);
+  context.lineTo(32, 14);
+  context.lineTo(48, 48);
+  context.closePath();
+  context.fill();
+  return canvas.toDataURL("image/png");
 };
 
-export const resolveTokenTextureKey = (scene: Phaser.Scene, tokenType: string) => {
+export const resolveTokenUrl = (tokenType: string) => {
+  if (resolvedUrlCache.has(tokenType)) {
+    return Promise.resolve(resolvedUrlCache.get(tokenType) as string);
+  }
+  if (resolvingCache.has(tokenType)) {
+    return resolvingCache.get(tokenType) as Promise<string>;
+  }
   const asset = resolveTokenAsset(tokenType);
-  const pngKey = buildTextureKey(asset.baseName, "png");
-  const jpgKey = buildTextureKey(asset.baseName, "png.jpg");
-  if (scene.textures.exists(pngKey)) {
-    return pngKey;
-  }
-  if (scene.textures.exists(jpgKey)) {
-    return jpgKey;
-  }
-  ensurePlaceholderTexture(scene, pngKey, asset.color);
-  return pngKey;
+  const promise = (async () => {
+    const pngUrl = buildTokenUrl(asset.baseName, "png");
+    const pngExists = await loadImage(pngUrl);
+    if (pngExists) {
+      resolvedUrlCache.set(tokenType, pngUrl);
+      return pngUrl;
+    }
+    const jpgUrl = buildTokenUrl(asset.baseName, "png.jpg");
+    const jpgExists = await loadImage(jpgUrl);
+    if (jpgExists) {
+      resolvedUrlCache.set(tokenType, jpgUrl);
+      return jpgUrl;
+    }
+    const placeholder = createPlaceholderDataUrl(asset.color);
+    resolvedUrlCache.set(tokenType, placeholder);
+    return placeholder;
+  })();
+  resolvingCache.set(tokenType, promise);
+  return promise;
 };
 
-export const getTokenFallbackColor = (tokenType: string) => resolveTokenAsset(tokenType).color;
+export const getTokenPlaceholderUrl = (tokenType: string) =>
+  createPlaceholderDataUrl(resolveTokenAsset(tokenType).color);
+
+export const getTokenAccentColor = (tokenType: string) => resolveTokenAsset(tokenType).color;

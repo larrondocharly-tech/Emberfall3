@@ -39,8 +39,7 @@ import {
 } from "./vtt/spells/spellTargeting";
 import { resolveSpell } from "./vtt/spells/spellResolver";
 import { renderOverlayCells } from "./vtt/overlays/overlayLayer";
-import { TokenSprites } from "./vtt/render/tokenSprites";
-import { preloadTokenAssets } from "./vtt/render/tokenAssetResolver";
+import { TokenSpriteRenderer } from "./vtt/render/tokenSprites";
 
 const WORLD_WIDTH = 1024;
 const WORLD_HEIGHT = 768;
@@ -871,8 +870,7 @@ function handleAttackTarget(targetId: string) {
     return;
   }
   const result = resolveAttack(attacker, target);
-  const scene = game.scene.getScene("GameScene") as GameScene;
-  scene?.playTokenAttack(attacker.id, { x: target.x, y: target.y });
+  playMeleeAttackFX(attacker.id, { x: target.x, y: target.y });
   const rollText = `${result.roll} + ${attacker.attackBonus} = ${result.total}`;
   const outcome = result.hit ? "HIT" : "MISS";
   appendChatMessage(
@@ -902,60 +900,32 @@ function handleAttackTarget(targetId: string) {
   renderGameGrid();
 }
 
-function getGridCellCenter(cell: { x: number; y: number }) {
-  const { step, offsetX, offsetY } = getGridMetrics();
-  return {
-    x: cell.x * step + offsetX + step / 2,
-    y: cell.y * step + offsetY + step / 2
-  };
-}
-
-function playProjectileEffect(from: { x: number; y: number }, to: { x: number; y: number }, color: number) {
-  const scene = game.scene.getScene("GameScene");
-  if (!scene) {
+function playMeleeAttackFX(attackerId: string, targetCell: { x: number; y: number }) {
+  if (!tokenSpriteRenderer) {
     return;
   }
-  const orb = scene.add.circle(from.x, from.y, 6, color, 1);
-  scene.tweens.add({
-    targets: orb,
-    x: to.x,
-    y: to.y,
-    duration: 280,
-    ease: "Sine.easeInOut",
-    onComplete: () => orb.destroy()
-  });
+  tokenSpriteRenderer.playMeleeAttackFX(attackerId, targetCell, getGridMetrics());
 }
 
-function playPulseEffect(at: { x: number; y: number }, color: number) {
-  const scene = game.scene.getScene("GameScene");
-  if (!scene) {
+function playProjectileFX(attackerCell: { x: number; y: number }, targetCell: { x: number; y: number }) {
+  if (!tokenSpriteRenderer) {
     return;
   }
-  const ring = scene.add.circle(at.x, at.y, 10, color, 0.4);
-  scene.tweens.add({
-    targets: ring,
-    scale: 2,
-    alpha: 0,
-    duration: 320,
-    ease: "Sine.easeOut",
-    onComplete: () => ring.destroy()
-  });
+  tokenSpriteRenderer.playProjectileFX(attackerCell, targetCell, getGridMetrics());
 }
 
-function playThunderEffect(at: { x: number; y: number }, color: number) {
-  const scene = game.scene.getScene("GameScene");
-  if (!scene) {
+function playAOEFX(cells: Array<{ x: number; y: number }>) {
+  if (!tokenSpriteRenderer) {
     return;
   }
-  const flash = scene.add.rectangle(at.x, at.y, 40, 40, color, 0.6);
-  scene.tweens.add({
-    targets: flash,
-    alpha: 0,
-    duration: 200,
-    ease: "Sine.easeOut",
-    onComplete: () => flash.destroy()
-  });
-  scene.cameras.main.shake(120, 0.003);
+  tokenSpriteRenderer.playAOEFX(cells, getGridMetrics());
+}
+
+function playHealFX(targetCell: { x: number; y: number }) {
+  if (!tokenSpriteRenderer) {
+    return;
+  }
+  tokenSpriteRenderer.playHealFX(targetCell, getGridMetrics());
 }
 
 function getTokensInArea(center: { x: number; y: number }, radius: number) {
@@ -1045,19 +1015,15 @@ function castSpell(spell: SpellDefinition, cell: { x: number; y: number }) {
     applyDamage,
     applyHealing,
     playFx: (kind, from, to) => {
-      const scene = game.scene.getScene("GameScene") as GameScene;
-      if (!scene) {
-        return;
-      }
       if (kind === "fire") {
-        scene.playFireBolt(from, to);
-        scene.playTokenCast(caster.id);
+        playProjectileFX(from, to);
       } else if (kind === "heal") {
-        scene.playHeal(to);
+        playHealFX(to);
       } else if (kind === "electric") {
-        scene.playThunder(to);
+        const cells = spellTargetingState ? getAreaTargets(spellTargetingState) : [to];
+        playAOEFX(cells);
       } else {
-        scene.playExplosion(to);
+        playAOEFX([to]);
       }
     }
   });
@@ -1411,10 +1377,9 @@ function renderGameGrid() {
     return;
   }
   canvasGridLayer.innerHTML = "";
-  if (canvasTokenLayer) {
+  if (canvasTokenLayer && !tokenSpriteRenderer) {
     canvasTokenLayer.innerHTML = "";
   }
-  canvasOverlay.innerHTML = "";
   if (!movementOverlayLayer) {
     movementOverlayLayer = document.createElement("div");
     movementOverlayLayer.className = "vtt-movement-overlay";
@@ -1430,9 +1395,15 @@ function renderGameGrid() {
   movementOverlayLayer.innerHTML = "";
   rangeOverlayLayer.innerHTML = "";
   surfaceOverlayLayer.innerHTML = "";
-  canvasOverlay.appendChild(surfaceOverlayLayer);
-  canvasOverlay.appendChild(rangeOverlayLayer);
-  canvasOverlay.appendChild(movementOverlayLayer);
+  if (!canvasOverlay.contains(surfaceOverlayLayer)) {
+    canvasOverlay.appendChild(surfaceOverlayLayer);
+  }
+  if (!canvasOverlay.contains(rangeOverlayLayer)) {
+    canvasOverlay.appendChild(rangeOverlayLayer);
+  }
+  if (!canvasOverlay.contains(movementOverlayLayer)) {
+    canvasOverlay.appendChild(movementOverlayLayer);
+  }
   const { step, offsetX, offsetY } = getGridMetrics();
   const worldSize = gridSize * step;
   canvasWorld.style.width = `${worldSize}px`;
@@ -1491,24 +1462,25 @@ function renderGameGrid() {
   canvasGridLayer.style.backgroundSize = `${step}px ${step}px`;
   canvasGridLayer.style.backgroundPosition = `${offsetX}px ${offsetY}px`;
 
-  if (canvasTokenLayer) {
+  if (canvasTokenLayer && canvasOverlay) {
+    // Token rendering lives here in main.ts/renderGameGrid (previously circle-based).
+    if (!tokenSpriteRenderer) {
+      tokenSpriteRenderer = new TokenSpriteRenderer(canvasTokenLayer, canvasOverlay);
+    }
+    const activeToken = getTurnContext().activeToken;
+    const currentMode = modeMachine.getMode();
+    const tokenIds = new Set<string>();
     gameState.tokens.forEach((tokenData) => {
-      const token = document.createElement("div");
-      token.className = "vtt-token";
+      tokenIds.add(tokenData.id);
       const isKo = tokenData.hp <= 0;
-      if (tokenData.id === selectedTokenId) {
-        token.classList.add("selected");
-      }
-      if (isKo) {
-        token.classList.add("ko");
-      }
-      const activeToken = getTurnContext().activeToken;
-      const currentMode = modeMachine.getMode();
+      let targetable = false;
+      let outOfRange = false;
+      let hovered = false;
       if (activeToken && tokenData.id !== activeToken.id) {
         if (currentMode === "attack" && !isAllyToken(activeToken, tokenData)) {
-          token.classList.add("vtt-token-target");
+          targetable = true;
           if (!attackRangeCells.has(`${tokenData.x},${tokenData.y}`)) {
-            token.classList.add("out-of-range");
+            outOfRange = true;
           }
         }
         if (currentMode === "spell_targeting" && spellTargetingState) {
@@ -1519,48 +1491,33 @@ function renderGameGrid() {
             (spell.targeting === "enemy" && !isAlly) ||
             (spell.targeting === "ally" && isAlly);
           if (validTarget) {
-            token.classList.add("vtt-token-target");
+            targetable = true;
             if (!spellRangeCells.has(`${tokenData.x},${tokenData.y}`)) {
-              token.classList.add("out-of-range");
+              outOfRange = true;
             }
           }
         }
         if (tokenData.id === hoveredTokenId) {
-          token.classList.add("hovered");
+          hovered = true;
         }
       }
-      token.dataset.tokenId = tokenData.id;
-      const tokenSize = step * tokenData.size * 0.7;
-      token.style.width = `${tokenSize}px`;
-      token.style.height = `${tokenSize}px`;
-      token.style.left = `${tokenData.x * step + offsetX + step / 2}px`;
-      token.style.top = `${tokenData.y * step + offsetY + step / 2}px`;
-      token.style.background = tokenData.color;
-
-      if (combatState.enabled) {
-        const label = document.createElement("div");
-        label.className = "vtt-token-label";
-        label.textContent = isKo ? "KO" : `${tokenData.name} ${tokenData.hp}/${tokenData.maxHp}`;
-
-        const hpBar = document.createElement("div");
-        hpBar.className = "vtt-token-hp";
-        const hpFill = document.createElement("span");
-        const ratio = tokenData.maxHp > 0 ? tokenData.hp / tokenData.maxHp : 0;
-        hpFill.style.width = `${Math.max(0, Math.min(1, ratio)) * 100}%`;
-        hpBar.appendChild(hpFill);
-        label.appendChild(hpBar);
-        token.appendChild(label);
-      }
-      if (combatState.started) {
-        const activeId = getActiveCombatTokenId();
-        if (activeId && tokenData.id === activeId) {
-          token.classList.add("active-turn");
-        } else if (activeId) {
-          token.classList.add("locked");
-        }
-      }
-      canvasTokenLayer.appendChild(token);
+      const activeId = combatState.started ? getActiveCombatTokenId() : null;
+      tokenSpriteRenderer?.renderToken(
+        tokenData,
+        {
+          selected: tokenData.id === selectedTokenId,
+          ko: isKo,
+          targetable,
+          outOfRange,
+          hovered,
+          activeTurn: Boolean(activeId && tokenData.id === activeId),
+          locked: Boolean(activeId && tokenData.id !== activeId),
+          showLabel: combatState.enabled
+        },
+        { step, offsetX, offsetY }
+      );
     });
+    tokenSpriteRenderer.cleanup(tokenIds);
   }
 
   drawZones.forEach((zone) => {
@@ -2465,6 +2422,7 @@ let vttChatLog: HTMLDivElement | null = null;
 let movementOverlayLayer: HTMLDivElement | null = null;
 let rangeOverlayLayer: HTMLDivElement | null = null;
 let surfaceOverlayLayer: HTMLDivElement | null = null;
+let tokenSpriteRenderer: TokenSpriteRenderer | null = null;
 let movementWarningMessage = "";
 let movementWarningAt = 0;
 let actionWarningAt = new Map<string, number>();
@@ -2519,7 +2477,6 @@ let combatEnded = false;
 let isAITurnRunning = false;
 
 class GameScene extends Phaser.Scene {
-  private tokenSprites?: TokenSprites;
   private gridGraphics?: Phaser.GameObjects.Graphics;
   private combatGridGraphics?: Phaser.GameObjects.Graphics;
   private obstacleGraphics?: Phaser.GameObjects.Graphics;
@@ -2595,14 +2552,8 @@ class GameScene extends Phaser.Scene {
     }
     const state = room.state as GameStateSchema;
     const obstacles = Array.isArray(state.obstacles) ? state.obstacles : [];
-    const tokens = state.tokens ?? {};
     this.renderObstacles(obstacles);
     const combat = state.combat as CombatStateSchema;
-    this.tokenSprites?.render(tokens, {
-      selectedTokenId,
-      hoveredTokenId,
-      activeTokenId: combat.active ? combat.activeTokenId : null
-    });
     this.renderGrid();
     this.renderCombatGrid(combat);
   }
@@ -2663,34 +2614,6 @@ class GameScene extends Phaser.Scene {
       const startY = combat.originY + y * combat.gridCellSize;
       this.combatGridGraphics.lineBetween(combat.originX, startY, combat.originX + combat.gridSize * combat.gridCellSize, startY);
     }
-  }
-
-  playTokenAttack(tokenId: string, target: { x: number; y: number }) {
-    this.tokenSprites?.animateAttack(tokenId, target);
-  }
-
-  playTokenCast(tokenId: string) {
-    this.tokenSprites?.animateCast(tokenId);
-  }
-
-  playTokenHit(tokenId: string) {
-    this.tokenSprites?.animateHit(tokenId);
-  }
-
-  playFireBolt(from: { x: number; y: number }, to: { x: number; y: number }) {
-    this.tokenSprites?.playFireBolt(from, to);
-  }
-
-  playThunder(at: { x: number; y: number }) {
-    this.tokenSprites?.playThunder(at);
-  }
-
-  playHeal(at: { x: number; y: number }) {
-    this.tokenSprites?.playHeal(at);
-  }
-
-  playExplosion(at: { x: number; y: number }) {
-    this.tokenSprites?.playExplosion(at);
   }
 
   private renderObstacles(obstacles: ObstacleSchema[]) {
