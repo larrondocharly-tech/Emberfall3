@@ -3,6 +3,7 @@ export type TopBarElements = {
   room: HTMLSpanElement;
   status: HTMLSpanElement;
   tool: HTMLSpanElement;
+  inventoryButton: HTMLButtonElement;
   toggleSidebar: HTMLButtonElement;
   combatToggle: HTMLButtonElement;
   combatInfo: HTMLSpanElement;
@@ -40,16 +41,21 @@ export function createTopBar(): TopBarElements {
   endTurn.type = "button";
   endTurn.textContent = "Passer";
 
+  const inventoryButton = document.createElement("button");
+  inventoryButton.type = "button";
+  inventoryButton.textContent = "Inventaire";
+
   meta.appendChild(room);
   meta.appendChild(status);
   meta.appendChild(tool);
   meta.appendChild(combatInfo);
   meta.appendChild(combatToggle);
   meta.appendChild(endTurn);
+  meta.appendChild(inventoryButton);
   meta.appendChild(toggleSidebar);
 
   root.appendChild(title);
   root.appendChild(meta);
 
-  return { root, room, status, tool, toggleSidebar, combatToggle, combatInfo, endTurn };
+  return { root, room, status, tool, inventoryButton, toggleSidebar, combatToggle, combatInfo, endTurn };
 }

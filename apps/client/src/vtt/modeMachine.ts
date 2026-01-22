@@ -1,4 +1,4 @@
-export type VttMode = "idle" | "movePreview" | "attackSelect" | "spellMenu" | "spellTarget";
+export type VttMode = "idle" | "move" | "attack" | "spell_menu" | "spell_targeting";
 
 type ModeChangeHandler = (next: VttMode, prev: VttMode) => void;
 
