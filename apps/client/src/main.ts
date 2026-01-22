@@ -2662,13 +2662,20 @@ const chatInput = document.getElementById("chatInput") as HTMLInputElement;
 const raceSelect = document.getElementById("raceSelect") as HTMLSelectElement;
 const classSelect = document.getElementById("classSelect") as HTMLSelectElement;
 
+let inventoryState: InventoryState = defaultInventoryState;
+let inventoryFlags: Record<string, boolean> = {};
+let questFlags: Record<string, boolean> = {};
+
 const adapter: GameAdapter = FEATURE_MULTIPLAYER ? createNetworkAdapter() : createLocalAdapter();
 let gameState = initialState;
+
 const loadedSave = loadGameState();
-inventoryState = loadedSave.inventory;
-inventoryFlags = loadedSave.flags;
-questFlags = loadedSave.quests;
+inventoryState = loadedSave.inventory ?? defaultInventoryState;
+inventoryFlags = loadedSave.flags ?? {};
+questFlags = loadedSave.quests ?? {};
+
 ensureNpcTokensForScene(gameState.scene.id);
+
 let room: Room<GameStateSchema> | null = null;
 let sessionId: string | null = null;
 let gridVisible = true;
@@ -2743,9 +2750,6 @@ let isSpellMenuOpen = false;
 let spellMenuListenersReady = false;
 let spellMenuRef: HTMLDivElement | null = null;
 let spellButtonRef: HTMLButtonElement | null = null;
-let inventoryState: InventoryState = defaultInventoryState;
-let inventoryFlags: Record<string, boolean> = {};
-let questFlags: Record<string, boolean> = {};
 let inventoryPanel: HTMLDivElement | null = null;
 let inventoryList: HTMLDivElement | null = null;
 let inventoryDetail: HTMLDivElement | null = null;
