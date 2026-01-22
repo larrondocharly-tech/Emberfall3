@@ -842,6 +842,91 @@ function toggleSpellMenu() {
   openSpellMenu();
 }
 
+function renderDialogueNode(node: DialogueNode) {
+  if (!dialogueSpeaker || !dialogueText || !dialogueChoices) {
+    return;
+  }
+  dialogueSpeaker.textContent = node.speaker;
+  dialogueText.textContent = node.text;
+  dialogueChoices.innerHTML = "";
+  node.choices.forEach((choice) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = choice.text;
+    button.addEventListener("click", () => {
+      applyDialogueChoice(choice);
+    });
+    dialogueChoices.appendChild(button);
+  });
+}
+
+function resolveGiveItemFlag(npcId: string, itemId: string) {
+  if (npcId === "npc_innkeeper" && itemId === "key_tavern") {
+    return "npc_innkeeper_gave_key";
+  }
+  return `${npcId}_gave_${itemId}`;
+}
+
+function applyDialogueChoice(choice: DialogueNode["choices"][number]) {
+  if (!activeDialogue || !activeNpc) {
+    return;
+  }
+  if (choice.giveItem) {
+    const flagKey = resolveGiveItemFlag(activeNpc.id, choice.giveItem);
+    if (!inventoryFlags[flagKey]) {
+      addItemToInventory(choice.giveItem, 1);
+      inventoryFlags = { ...inventoryFlags, [flagKey]: true };
+      persistSaveState();
+      const def = getItemDef(choice.giveItem);
+      appendSystemLog(`Vous recevez: ${def?.name ?? choice.giveItem}`);
+    } else {
+      appendSystemLog("Vous avez déjà reçu cet objet.");
+    }
+  }
+  if (choice.next) {
+    const next = getDialogueNode(choice.next);
+    if (next) {
+      activeDialogue = next;
+      renderDialogueNode(next);
+      return;
+    }
+  }
+  if (choice.startQuest) {
+    questFlags = { ...questFlags, [choice.startQuest]: true };
+    persistSaveState();
+    appendSystemLog("Nouvelle quête: Veiller sur la Frontière d'Ember.");
+  }
+  closeDialogue();
+}
+
+function openSpellMenu() {
+  if (!spellMenuRef) {
+    return;
+  }
+  isSpellMenuOpen = true;
+  spellMenuRef.classList.add("open");
+}
+
+function closeSpellMenu(options?: { preserveMode?: boolean }) {
+  if (!spellMenuRef) {
+    return;
+  }
+  isSpellMenuOpen = false;
+  spellMenuRef.classList.remove("open");
+  if (!options?.preserveMode && modeMachine.getMode() === "spell_menu") {
+    modeMachine.setMode("idle");
+  }
+}
+
+function toggleSpellMenu() {
+  if (isSpellMenuOpen) {
+    closeSpellMenu();
+    return;
+  }
+  modeMachine.setMode("spell_menu");
+  openSpellMenu();
+}
+
 
 function startCombat() {
   if (!combatState.enabled || combatState.started) {
@@ -1668,9 +1753,14 @@ function renderGameGrid() {
     surfaceOverlayLayer = document.createElement("div");
     surfaceOverlayLayer.className = "vtt-movement-overlay";
   }
+  if (!hotspotOverlayLayer) {
+    hotspotOverlayLayer = document.createElement("div");
+    hotspotOverlayLayer.className = "vtt-hotspot-overlay";
+  }
   movementOverlayLayer.innerHTML = "";
   rangeOverlayLayer.innerHTML = "";
   surfaceOverlayLayer.innerHTML = "";
+  hotspotOverlayLayer.innerHTML = "";
   if (!canvasOverlay.contains(surfaceOverlayLayer)) {
     canvasOverlay.appendChild(surfaceOverlayLayer);
   }
@@ -1680,10 +1770,28 @@ function renderGameGrid() {
   if (!canvasOverlay.contains(movementOverlayLayer)) {
     canvasOverlay.appendChild(movementOverlayLayer);
   }
+  if (!canvasOverlay.contains(hotspotOverlayLayer)) {
+    canvasOverlay.appendChild(hotspotOverlayLayer);
+  }
   const { step, offsetX, offsetY } = getGridMetrics();
   const worldSize = gridSize * step;
   canvasWorld.style.width = `${worldSize}px`;
   canvasWorld.style.height = `${worldSize}px`;
+
+  const hotspots = EXIT_HOTSPOTS[gameState.scene.id] ?? [];
+  hotspots.forEach((spot) => {
+    for (let dx = 0; dx < spot.width; dx += 1) {
+      for (let dy = 0; dy < spot.height; dy += 1) {
+        const cell = document.createElement("div");
+        cell.className = "vtt-hotspot-cell";
+        cell.style.left = `${(spot.x + dx) * step + offsetX + 2}px`;
+        cell.style.top = `${(spot.y + dy) * step + offsetY + 2}px`;
+        cell.style.width = `${step - 4}px`;
+        cell.style.height = `${step - 4}px`;
+        hotspotOverlayLayer?.appendChild(cell);
+      }
+    }
+  });
 
   surfaceStore.forEachSurface((cell) => {
     const surfaceEl = document.createElement("div");
@@ -2325,6 +2433,16 @@ function setGameView(session: Session) {
             return;
           }
         }
+        if (event.button === 0) {
+          const coords = getGridCoordinates(event);
+          if (coords) {
+            const hotspot = getExitHotspotAt(gameState.scene.id, coords);
+            if (hotspot) {
+              tryExitThroughHotspot(hotspot);
+              return;
+            }
+          }
+        }
         if (currentMode === "attack" && event.button === 0) {
           const targetId = getTokenIdFromEvent(event);
           if (targetId) {
@@ -2724,6 +2842,9 @@ let questFlags: Record<string, boolean> = {};
 
 const adapter: GameAdapter = FEATURE_MULTIPLAYER ? createNetworkAdapter() : createLocalAdapter();
 let gameState = initialState;
+let inventoryState: InventoryState = defaultInventoryState;
+let inventoryFlags: Record<string, boolean> = {};
+let questFlags: Record<string, boolean> = {};
 const loadedSave = loadGameState();
 inventoryState = loadedSave.inventory;
 inventoryFlags = loadedSave.flags;
@@ -2788,6 +2909,7 @@ let vttChatLog: HTMLDivElement | null = null;
 let movementOverlayLayer: HTMLDivElement | null = null;
 let rangeOverlayLayer: HTMLDivElement | null = null;
 let surfaceOverlayLayer: HTMLDivElement | null = null;
+let hotspotOverlayLayer: HTMLDivElement | null = null;
 let tokenSpriteRenderer: TokenSpriteRenderer | null = null;
 let movementWarningMessage = "";
 let movementWarningAt = 0;
@@ -2830,9 +2952,6 @@ const EXIT_HOTSPOTS: Record<string, ExitHotspot[]> = {
     }
   ]
 };
-let inventoryState: InventoryState = defaultInventoryState;
-let inventoryFlags: Record<string, boolean> = {};
-let questFlags: Record<string, boolean> = {};
 let inventoryPanel: HTMLDivElement | null = null;
 let inventoryList: HTMLDivElement | null = null;
 let inventoryDetail: HTMLDivElement | null = null;
