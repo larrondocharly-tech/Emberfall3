@@ -31,11 +31,15 @@ export const dialogueNodes: DialogueNode[] = [
   {
     id: "innkeeper_intro",
     speaker: "Aubergiste",
-    text: "Bienvenue voyageur. Tu cherches quelque chose de spécial ?",
+    text: "Bienvenue à la Frontière d'Ember. Les Pierres-Cœur fissurées ont rendu la nuit capricieuse.",
     choices: [
       {
         text: "Je cherche une chambre sûre.",
         next: "innkeeper_key"
+      },
+      {
+        text: "Que se passe-t-il dehors ?",
+        next: "innkeeper_lore"
       },
       {
         text: "Rien, merci.",
@@ -46,11 +50,38 @@ export const dialogueNodes: DialogueNode[] = [
   {
     id: "innkeeper_key",
     speaker: "Aubergiste",
-    text: "Tu as l'air fiable. Voici une clé, ne la perds pas.",
+    text: "Tu as l'air fiable. Prends cette clé, elle ouvre une chambre au calme.",
     choices: [
       {
-        text: "Merci !",
+        text: "Merci. Je te revaudrai ça.",
         giveItem: "key_tavern",
+        startQuest: "emberfront_watch",
+        end: true
+      }
+    ]
+  },
+  {
+    id: "innkeeper_lore",
+    speaker: "Aubergiste",
+    text: "Depuis que la Pierre-Cœur d'Ember s'est fendue, la magie claque comme un feu sans foyer.",
+    choices: [
+      {
+        text: "Je vais aider si je peux.",
+        next: "innkeeper_key"
+      },
+      {
+        text: "Je préfère rester discret.",
+        end: true
+      }
+    ]
+  },
+  {
+    id: "innkeeper_after",
+    speaker: "Aubergiste",
+    text: "Tu as déjà ta clé. Repose-toi, l'Ember ne dort jamais.",
+    choices: [
+      {
+        text: "Merci, je reviens bientôt.",
         end: true
       }
     ]
