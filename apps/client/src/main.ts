@@ -1068,20 +1068,22 @@ function renderSpellMenu() {
     button.addEventListener("pointerdown", (event) => {
       event.preventDefault();
       event.stopPropagation();
-    });
-    button.addEventListener("click", () => {
-      const caster = getSpellCaster();
-      if (!caster) {
-        showActionWarning("Aucun lanceur disponible.", "no-caster");
-        return;
-      }
-      selectedSpellId = spell.id;
-      updateSpellRange(caster, spell.range);
-      modeMachine.setMode("spellTarget");
-      closeSpellMenu({ preserveMode: true });
+      selectSpell(spell);
     });
     combatHud.spellList.appendChild(button);
   });
+}
+
+function selectSpell(spell: Spell) {
+  const caster = getSpellCaster();
+  if (!caster) {
+    showActionWarning("Aucun lanceur disponible.", "no-caster");
+    return;
+  }
+  selectedSpellId = spell.id;
+  updateSpellRange(caster, spell.range);
+  modeMachine.setMode("spellTarget");
+  closeSpellMenu({ preserveMode: true });
 }
 
 function setActiveTool(tool: Tool) {
@@ -1874,11 +1876,17 @@ function setGameView(session: Session) {
       combatHud.endTurnButton.addEventListener("click", () => {
         endTurn();
       });
-      renderSpellMenu();
-      spellMenuRef = combatHud.spellMenu;
-      spellButtonRef = combatHud.spellsButton;
-      if (!spellMenuListenersReady) {
-        spellMenuListenersReady = true;
+    renderSpellMenu();
+    spellMenuRef = combatHud.spellMenu;
+    spellButtonRef = combatHud.spellsButton;
+    if (spellMenuRef) {
+      spellMenuRef.style.pointerEvents = "auto";
+    }
+    if (spellButtonRef) {
+      spellButtonRef.style.pointerEvents = "auto";
+    }
+    if (!spellMenuListenersReady) {
+      spellMenuListenersReady = true;
         combatHud.spellMenu.addEventListener("pointerdown", (event) => {
           event.preventDefault();
           event.stopPropagation();
