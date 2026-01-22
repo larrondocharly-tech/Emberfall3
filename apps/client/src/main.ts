@@ -1,6 +1,14 @@
 import Phaser from "phaser";
 import type { Room } from "colyseus.js";
-import type { ClassData, MonsterData, RaceData, SpellData } from "@emberfall3/shared";
+import type {
+  ClassData,
+  DialogueNode,
+  InventoryState,
+  MonsterData,
+  NpcDef,
+  RaceData,
+  SpellData
+} from "@emberfall3/shared";
 import { dataApi } from "./lib/dataApi";
 import { FEATURE_MULTIPLAYER } from "./config/features";
 import { createLocalAdapter } from "./adapters/localAdapter";
@@ -40,6 +48,13 @@ import {
 import { resolveSpell } from "./vtt/spells/spellResolver";
 import { renderOverlayCells } from "./vtt/overlays/overlayLayer";
 import { TokenSpriteRenderer } from "./vtt/render/tokenSprites";
+import {
+  getDialogueNode,
+  getItemDef,
+  getNpcByScene,
+  getNpcDef
+} from "./vtt/data/narrativeData";
+import { defaultInventoryState, loadGameState, saveGameState } from "./vtt/data/saveManager";
 
 const WORLD_WIDTH = 1024;
 const WORLD_HEIGHT = 768;
@@ -247,6 +262,7 @@ function applyScene(scene: Scene, options: { resetCamera?: boolean; recenterToke
     resetCameraToScene(scene);
   }
   applySceneMap(scene);
+  ensureNpcTokensForScene(scene.id);
   if (topBarStatus) {
     topBarStatus.textContent = `Solo · Scene: ${scene.name}`;
   }
@@ -309,6 +325,39 @@ function getTokenById(id: string | null) {
     return null;
   }
   return gameState.tokens.find((token) => token.id === id) ?? null;
+}
+
+function ensureNpcTokensForScene(sceneId: string) {
+  const npcs = getNpcByScene(sceneId);
+  const npcIdsForScene = new Set(npcs.map((npc) => npc.id));
+  const filteredTokens = gameState.tokens.filter((token) =>
+    token.type === "npc" ? npcIdsForScene.has(token.id) : true
+  );
+  const existingIds = new Set(filteredTokens.map((token) => token.id));
+  const newTokens = npcs
+    .filter((npc) => !existingIds.has(npc.id))
+    .map((npc) => ({
+      id: npc.id,
+      name: npc.name,
+      x: npc.gridX,
+      y: npc.gridY,
+      size: 1,
+      color: "#22c55e",
+      type: "npc" as const,
+      hp: 8,
+      maxHp: 8,
+      ac: 10,
+      attackBonus: 1,
+      initBonus: 0,
+      damage: "1d4",
+      actionsPerTurn: 1,
+      movementPerTurn: 4,
+      actionsRemaining: 1,
+      movementRemaining: 4
+    }));
+  if (newTokens.length || filteredTokens.length !== gameState.tokens.length) {
+    gameState = { ...gameState, tokens: [...filteredTokens, ...newTokens] };
+  }
 }
 
 function getTokenIdFromEvent(event: PointerEvent) {
@@ -535,7 +584,7 @@ function updateCombatHUD() {
 
   combatHud.attackButton.disabled = !turnContext.isPlayerTurn || !canAct || modeMachine.getMode() === "attack";
   combatHud.spellsButton.disabled = !turnContext.isPlayerTurn || !canAct;
-  combatHud.itemsButton.disabled = !turnContext.isPlayerTurn || !canAct;
+  combatHud.itemsButton.disabled = false;
   combatHud.endTurnButton.disabled = false;
 
   if (!turnContext.isPlayerTurn) {
@@ -576,22 +625,213 @@ function requestAttack(attackerId: string) {
 
 function requestSimpleAction(kind: "spells" | "items") {
   const turnContext = getTurnContext();
-  if (!turnContext.combatOn || !turnContext.combatStarted || !turnContext.activeToken) {
-    return;
-  }
-  if (!turnContext.isPlayerTurn) {
-    showActionWarning("Ce n'est pas votre tour.", "not-your-turn");
-    return;
-  }
-  if (!canTokenAct(turnContext.activeToken)) {
-    showActionWarning("Action déjà utilisée.", "action-used");
-    return;
-  }
   if (kind === "spells") {
+    if (!turnContext.combatOn || !turnContext.combatStarted || !turnContext.activeToken) {
+      return;
+    }
+    if (!turnContext.isPlayerTurn) {
+      showActionWarning("Ce n'est pas votre tour.", "not-your-turn");
+      return;
+    }
+    if (!canTokenAct(turnContext.activeToken)) {
+      showActionWarning("Action déjà utilisée.", "action-used");
+      return;
+    }
     toggleSpellMenu();
     return;
   }
-  appendChatMessage("Objets: à venir.");
+  openInventoryPanel();
+}
+
+function persistSaveState() {
+  saveGameState({
+    inventory: inventoryState,
+    flags: inventoryFlags,
+    quests: questFlags
+  });
+}
+
+function addItemToInventory(itemId: string, quantity = 1) {
+  const def = getItemDef(itemId);
+  if (!def) {
+    return;
+  }
+  const current = inventoryState.items[itemId] ?? 0;
+  const nextQuantity = def.stackable ? current + quantity : Math.max(current, 1);
+  inventoryState = {
+    ...inventoryState,
+    items: {
+      ...inventoryState.items,
+      [itemId]: nextQuantity
+    }
+  };
+  persistSaveState();
+  renderInventory();
+}
+
+function renderInventory() {
+  if (!inventoryList || !inventoryDetail) {
+    return;
+  }
+  inventoryList.innerHTML = "";
+  const itemIds = Object.keys(inventoryState.items);
+  if (itemIds.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "vtt-inventory-empty";
+    empty.textContent = "Inventaire vide.";
+    inventoryList.appendChild(empty);
+    inventoryDetail.textContent = "Sélectionnez un objet.";
+    return;
+  }
+  itemIds.forEach((itemId) => {
+    const def = getItemDef(itemId);
+    if (!def) {
+      return;
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "vtt-inventory-item";
+    const qty = inventoryState.items[itemId];
+    button.innerHTML = `<span>${def.icon ?? "🎒"} ${def.name}</span><span>x${qty}</span>`;
+    button.addEventListener("click", () => {
+      inventoryDetail.innerHTML = `<strong>${def.name}</strong><p>${def.description}</p>`;
+    });
+    inventoryList.appendChild(button);
+  });
+  const first = getItemDef(itemIds[0]);
+  if (first) {
+    inventoryDetail.innerHTML = `<strong>${first.name}</strong><p>${first.description}</p>`;
+  }
+}
+
+function openInventoryPanel() {
+  if (!inventoryPanel) {
+    return;
+  }
+  inventoryPanel.classList.add("open");
+  renderInventory();
+}
+
+function closeInventoryPanel() {
+  if (!inventoryPanel) {
+    return;
+  }
+  inventoryPanel.classList.remove("open");
+}
+
+function appendSystemLog(message: string) {
+  if (!systemLog) {
+    return;
+  }
+  const line = document.createElement("div");
+  line.textContent = message;
+  systemLog.appendChild(line);
+  systemLog.scrollTop = systemLog.scrollHeight;
+}
+
+function openDialogue(npc: NpcDef) {
+  const node = getDialogueNode(npc.dialogueId);
+  if (!dialoguePanel || !node) {
+    return;
+  }
+  activeNpc = npc;
+  activeDialogue = node;
+  dialoguePanel.classList.add("open");
+  renderDialogueNode(node);
+}
+
+function closeDialogue() {
+  if (!dialoguePanel) {
+    return;
+  }
+  dialoguePanel.classList.remove("open");
+  activeDialogue = null;
+  activeNpc = null;
+  appendSystemLog("Dialogue terminé.");
+}
+
+function renderDialogueNode(node: DialogueNode) {
+  if (!dialogueSpeaker || !dialogueText || !dialogueChoices) {
+    return;
+  }
+  dialogueSpeaker.textContent = node.speaker;
+  dialogueText.textContent = node.text;
+  dialogueChoices.innerHTML = "";
+  node.choices.forEach((choice) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = choice.text;
+    button.addEventListener("click", () => {
+      applyDialogueChoice(choice);
+    });
+    dialogueChoices.appendChild(button);
+  });
+}
+
+function resolveGiveItemFlag(npcId: string, itemId: string) {
+  if (npcId === "npc_innkeeper" && itemId === "key_tavern") {
+    return "npc_innkeeper_gave_key";
+  }
+  return `${npcId}_gave_${itemId}`;
+}
+
+function applyDialogueChoice(choice: DialogueNode["choices"][number]) {
+  if (!activeDialogue || !activeNpc) {
+    return;
+  }
+  if (choice.giveItem) {
+    const flagKey = resolveGiveItemFlag(activeNpc.id, choice.giveItem);
+    if (!inventoryFlags[flagKey]) {
+      addItemToInventory(choice.giveItem, 1);
+      inventoryFlags = { ...inventoryFlags, [flagKey]: true };
+      persistSaveState();
+      const def = getItemDef(choice.giveItem);
+      appendSystemLog(`Vous recevez: ${def?.name ?? choice.giveItem}`);
+    } else {
+      appendSystemLog("Vous avez déjà reçu cet objet.");
+    }
+  }
+  if (choice.next) {
+    const next = getDialogueNode(choice.next);
+    if (next) {
+      activeDialogue = next;
+      renderDialogueNode(next);
+      return;
+    }
+  }
+  if (choice.startQuest) {
+    questFlags = { ...questFlags, [choice.startQuest]: true };
+    persistSaveState();
+  }
+  closeDialogue();
+}
+
+function openSpellMenu() {
+  if (!spellMenuRef) {
+    return;
+  }
+  isSpellMenuOpen = true;
+  spellMenuRef.classList.add("open");
+}
+
+function closeSpellMenu(options?: { preserveMode?: boolean }) {
+  if (!spellMenuRef) {
+    return;
+  }
+  isSpellMenuOpen = false;
+  spellMenuRef.classList.remove("open");
+  if (!options?.preserveMode && modeMachine.getMode() === "spell_menu") {
+    modeMachine.setMode("idle");
+  }
+}
+
+function toggleSpellMenu() {
+  if (isSpellMenuOpen) {
+    closeSpellMenu();
+    return;
+  }
+  modeMachine.setMode("spell_menu");
+  openSpellMenu();
 }
 
 function openSpellMenu() {
@@ -1367,6 +1607,15 @@ function getSpellCaster() {
   return getTurnContext().activeToken ?? getTokenById(selectedTokenId);
 }
 
+function getNearbyNpcToken() {
+  const player = getTokenById(selectedTokenId) ?? getTokenById("player");
+  if (!player) {
+    return null;
+  }
+  const npcs = gameState.tokens.filter((token) => token.type === "npc");
+  return npcs.find((npc) => chebyshevDistance(player, npc) <= 1) ?? null;
+}
+
 function renderGameGrid() {
   if (!gamePosition || !canvasWorld) {
     return;
@@ -1792,6 +2041,49 @@ function setGameView(session: Session) {
     const rightSidebar = createRightSidebar();
     const bottom = createBottomControls();
     const combatHudView = createCombatHUD();
+    const inventoryPanelEl = document.createElement("div");
+    inventoryPanelEl.className = "vtt-inventory-panel";
+    const inventoryHeader = document.createElement("div");
+    inventoryHeader.className = "vtt-inventory-header";
+    const inventoryTitle = document.createElement("strong");
+    inventoryTitle.textContent = "Inventaire";
+    const inventoryClose = document.createElement("button");
+    inventoryClose.type = "button";
+    inventoryClose.textContent = "Fermer";
+    inventoryHeader.appendChild(inventoryTitle);
+    inventoryHeader.appendChild(inventoryClose);
+    const inventoryBody = document.createElement("div");
+    inventoryBody.className = "vtt-inventory-body";
+    const inventoryListEl = document.createElement("div");
+    inventoryListEl.className = "vtt-inventory-list";
+    const inventoryDetailEl = document.createElement("div");
+    inventoryDetailEl.className = "vtt-inventory-detail";
+    inventoryBody.appendChild(inventoryListEl);
+    inventoryBody.appendChild(inventoryDetailEl);
+    inventoryPanelEl.appendChild(inventoryHeader);
+    inventoryPanelEl.appendChild(inventoryBody);
+
+    const dialoguePanelEl = document.createElement("div");
+    dialoguePanelEl.className = "vtt-dialogue-panel";
+    const dialogueHeader = document.createElement("div");
+    dialogueHeader.className = "vtt-dialogue-header";
+    const dialogueSpeakerEl = document.createElement("div");
+    dialogueSpeakerEl.className = "vtt-dialogue-speaker";
+    const dialogueClose = document.createElement("button");
+    dialogueClose.type = "button";
+    dialogueClose.textContent = "Fermer";
+    dialogueHeader.appendChild(dialogueSpeakerEl);
+    dialogueHeader.appendChild(dialogueClose);
+    const dialogueTextEl = document.createElement("div");
+    dialogueTextEl.className = "vtt-dialogue-text";
+    const dialogueChoicesEl = document.createElement("div");
+    dialogueChoicesEl.className = "vtt-dialogue-choices";
+    dialoguePanelEl.appendChild(dialogueHeader);
+    dialoguePanelEl.appendChild(dialogueTextEl);
+    dialoguePanelEl.appendChild(dialogueChoicesEl);
+
+    const systemLogEl = document.createElement("div");
+    systemLogEl.className = "vtt-system-log";
 
     const body = document.createElement("div");
     body.className = "vtt-body";
@@ -1806,6 +2098,9 @@ function setGameView(session: Session) {
 
     canvasView.root.appendChild(bottom.root);
     canvasView.root.appendChild(combatHudView.root);
+    canvasView.root.appendChild(inventoryPanelEl);
+    canvasView.root.appendChild(dialoguePanelEl);
+    canvasView.root.appendChild(systemLogEl);
 
     gameView.appendChild(topBar.root);
     gameView.appendChild(body);
@@ -1825,11 +2120,20 @@ function setGameView(session: Session) {
     combatToggleBtn = topBar.combatToggle;
     vttEndTurnBtn = topBar.endTurn;
     combatInfo = topBar.combatInfo;
+    inventoryButton = topBar.inventoryButton;
     combatHud = combatHudView;
     backToLobbyBtn = rightSidebar.backButton;
     tabButtons = rightSidebar.tabs;
     tabContents = rightSidebar.contents;
     bottomControls = bottom;
+    inventoryPanel = inventoryPanelEl;
+    inventoryList = inventoryListEl;
+    inventoryDetail = inventoryDetailEl;
+    dialoguePanel = dialoguePanelEl;
+    dialogueSpeaker = dialogueSpeakerEl;
+    dialogueText = dialogueTextEl;
+    dialogueChoices = dialogueChoicesEl;
+    systemLog = systemLogEl;
 
     if (combatHud && chat) {
       chat.classList.add("vtt-combat-chat");
@@ -1843,6 +2147,19 @@ function setGameView(session: Session) {
         return;
       }
       rightSidebarRoot.classList.toggle("vtt-sidebar-collapsed");
+    });
+
+    if (inventoryButton) {
+      inventoryButton.addEventListener("click", () => {
+        openInventoryPanel();
+      });
+    }
+
+    inventoryClose.addEventListener("click", () => {
+      closeInventoryPanel();
+    });
+    dialogueClose.addEventListener("click", () => {
+      closeDialogue();
     });
 
     if (combatToggleBtn) {
@@ -2024,6 +2341,14 @@ function setGameView(session: Session) {
             }
             const token = getTokenById(clickedTokenId);
             if (!token) {
+              return;
+            }
+            if (token.type === "npc") {
+              const npcDef = getNpcDef(token.id);
+              if (npcDef) {
+                selectToken(clickedTokenId);
+                openDialogue(npcDef);
+              }
               return;
             }
             selectToken(clickedTokenId);
@@ -2365,6 +2690,11 @@ const classSelect = document.getElementById("classSelect") as HTMLSelectElement;
 
 const adapter: GameAdapter = FEATURE_MULTIPLAYER ? createNetworkAdapter() : createLocalAdapter();
 let gameState = initialState;
+const loadedSave = loadGameState();
+inventoryState = loadedSave.inventory;
+inventoryFlags = loadedSave.flags;
+questFlags = loadedSave.quests;
+ensureNpcTokensForScene(gameState.scene.id);
 let room: Room<GameStateSchema> | null = null;
 let sessionId: string | null = null;
 let gridVisible = true;
@@ -2439,6 +2769,20 @@ let isSpellMenuOpen = false;
 let spellMenuListenersReady = false;
 let spellMenuRef: HTMLDivElement | null = null;
 let spellButtonRef: HTMLButtonElement | null = null;
+let inventoryState: InventoryState = defaultInventoryState;
+let inventoryFlags: Record<string, boolean> = {};
+let questFlags: Record<string, boolean> = {};
+let inventoryPanel: HTMLDivElement | null = null;
+let inventoryList: HTMLDivElement | null = null;
+let inventoryDetail: HTMLDivElement | null = null;
+let inventoryButton: HTMLButtonElement | null = null;
+let dialoguePanel: HTMLDivElement | null = null;
+let dialogueSpeaker: HTMLDivElement | null = null;
+let dialogueText: HTMLDivElement | null = null;
+let dialogueChoices: HTMLDivElement | null = null;
+let activeDialogue: DialogueNode | null = null;
+let activeNpc: NpcDef | null = null;
+let systemLog: HTMLDivElement | null = null;
 const surfaceStore = createSurfaceStore();
 const statusStore = createStatusStore();
 const modeMachine = createModeMachine("idle", handleModeChange);
@@ -2919,9 +3263,27 @@ window.addEventListener("keydown", (event) => {
   if (event.code === "Space") {
     isSpacePressed = true;
   }
+  if (event.code === "KeyE") {
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+      return;
+    }
+    const npcToken = getNearbyNpcToken();
+    if (npcToken) {
+      const npcDef = getNpcDef(npcToken.id);
+      if (npcDef) {
+        openDialogue(npcDef);
+      }
+    }
+  }
   if (event.key === "Escape") {
     if (isSpellMenuOpen) {
       closeSpellMenu();
+    }
+    if (inventoryPanel?.classList.contains("open")) {
+      closeInventoryPanel();
+    }
+    if (dialoguePanel?.classList.contains("open")) {
+      closeDialogue();
     }
     if (modeMachine.getMode() === "spell_targeting") {
       exitSpellTargeting();

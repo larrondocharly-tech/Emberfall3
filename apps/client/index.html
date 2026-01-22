@@ -691,6 +691,103 @@
         background: rgba(134, 239, 172, 0.9);
         box-shadow: 0 0 8px rgba(134, 239, 172, 0.8);
       }
+      .vtt-inventory-panel,
+      .vtt-dialogue-panel {
+        position: absolute;
+        right: 24px;
+        top: 80px;
+        width: 320px;
+        background: rgba(15, 23, 42, 0.95);
+        border: 1px solid #1f2937;
+        border-radius: 12px;
+        padding: 12px;
+        display: none;
+        flex-direction: column;
+        gap: 10px;
+        z-index: 30;
+        color: #f8fafc;
+      }
+      .vtt-inventory-panel.open,
+      .vtt-dialogue-panel.open {
+        display: flex;
+      }
+      .vtt-inventory-header,
+      .vtt-dialogue-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .vtt-inventory-body {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+      .vtt-inventory-list {
+        display: grid;
+        gap: 6px;
+        max-height: 200px;
+        overflow: auto;
+      }
+      .vtt-inventory-detail {
+        padding: 8px;
+        border-radius: 8px;
+        background: rgba(30, 41, 59, 0.7);
+        min-height: 80px;
+      }
+      .vtt-inventory-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: rgba(30, 41, 59, 0.6);
+        border: 1px solid rgba(51, 65, 85, 0.8);
+        color: inherit;
+        padding: 6px 8px;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .vtt-inventory-item:hover {
+        background: rgba(51, 65, 85, 0.8);
+      }
+      .vtt-inventory-empty {
+        font-size: 12px;
+        opacity: 0.7;
+      }
+      .vtt-dialogue-text {
+        background: rgba(30, 41, 59, 0.6);
+        border-radius: 8px;
+        padding: 8px;
+      }
+      .vtt-dialogue-choices {
+        display: grid;
+        gap: 6px;
+      }
+      .vtt-dialogue-choices button {
+        padding: 6px 8px;
+        border-radius: 8px;
+        border: 1px solid rgba(51, 65, 85, 0.8);
+        background: rgba(17, 24, 39, 0.8);
+        color: #f8fafc;
+        cursor: pointer;
+      }
+      .vtt-dialogue-choices button:hover {
+        background: rgba(51, 65, 85, 0.8);
+      }
+      .vtt-system-log {
+        position: absolute;
+        right: 24px;
+        bottom: 24px;
+        width: 280px;
+        max-height: 160px;
+        overflow: auto;
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(51, 65, 85, 0.8);
+        border-radius: 10px;
+        padding: 8px;
+        font-size: 12px;
+        display: grid;
+        gap: 4px;
+        color: #e2e8f0;
+      }
       .vtt-ping {
         position: absolute;
         width: 12px;
