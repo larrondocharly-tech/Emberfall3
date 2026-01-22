@@ -814,14 +814,6 @@ function applyDialogueChoice(choice: DialogueNode["choices"][number]) {
   closeDialogue();
 }
 
-function openSpellMenu() {
-  if (!spellMenuRef) {
-    return;
-  }
-  isSpellMenuOpen = true;
-  spellMenuRef.classList.add("open");
-}
-
 function closeSpellMenu(options?: { preserveMode?: boolean }) {
   if (!spellMenuRef) {
     return;
@@ -842,80 +834,12 @@ function toggleSpellMenu() {
   openSpellMenu();
 }
 
-function renderDialogueNode(node: DialogueNode) {
-  if (!dialogueSpeaker || !dialogueText || !dialogueChoices) {
-    return;
-  }
-  dialogueSpeaker.textContent = node.speaker;
-  dialogueText.textContent = node.text;
-  dialogueChoices.innerHTML = "";
-  node.choices.forEach((choice) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = choice.text;
-    button.addEventListener("click", () => {
-      applyDialogueChoice(choice);
-    });
-    dialogueChoices.appendChild(button);
-  });
-}
-
-function resolveGiveItemFlag(npcId: string, itemId: string) {
-  if (npcId === "npc_innkeeper" && itemId === "key_tavern") {
-    return "npc_innkeeper_gave_key";
-  }
-  return `${npcId}_gave_${itemId}`;
-}
-
-function applyDialogueChoice(choice: DialogueNode["choices"][number]) {
-  if (!activeDialogue || !activeNpc) {
-    return;
-  }
-  if (choice.giveItem) {
-    const flagKey = resolveGiveItemFlag(activeNpc.id, choice.giveItem);
-    if (!inventoryFlags[flagKey]) {
-      addItemToInventory(choice.giveItem, 1);
-      inventoryFlags = { ...inventoryFlags, [flagKey]: true };
-      persistSaveState();
-      const def = getItemDef(choice.giveItem);
-      appendSystemLog(`Vous recevez: ${def?.name ?? choice.giveItem}`);
-    } else {
-      appendSystemLog("Vous avez déjà reçu cet objet.");
-    }
-  }
-  if (choice.next) {
-    const next = getDialogueNode(choice.next);
-    if (next) {
-      activeDialogue = next;
-      renderDialogueNode(next);
-      return;
-    }
-  }
-  if (choice.startQuest) {
-    questFlags = { ...questFlags, [choice.startQuest]: true };
-    persistSaveState();
-    appendSystemLog("Nouvelle quête: Veiller sur la Frontière d'Ember.");
-  }
-  closeDialogue();
-}
-
 function openSpellMenu() {
   if (!spellMenuRef) {
     return;
   }
   isSpellMenuOpen = true;
   spellMenuRef.classList.add("open");
-}
-
-function closeSpellMenu(options?: { preserveMode?: boolean }) {
-  if (!spellMenuRef) {
-    return;
-  }
-  isSpellMenuOpen = false;
-  spellMenuRef.classList.remove("open");
-  if (!options?.preserveMode && modeMachine.getMode() === "spell_menu") {
-    modeMachine.setMode("idle");
-  }
 }
 
 function toggleSpellMenu() {
