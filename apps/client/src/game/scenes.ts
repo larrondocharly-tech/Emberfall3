@@ -25,6 +25,18 @@ export const scenes: Scene[] = [
     initialPanY: 0
   },
   {
+    id: "tavern_upstairs",
+    name: "Taverne · Étage",
+    mapUrl: "/data/maps/tavern_01.webp",
+    gridSize: 12,
+    gridOffsetX: 0,
+    gridOffsetY: 0,
+    pixelsPerGrid: 100,
+    initialZoom: 1,
+    initialPanX: 0,
+    initialPanY: 0
+  },
+  {
     id: "town",
     name: "Ville",
     mapUrl: "/data/maps/town_01.webp",

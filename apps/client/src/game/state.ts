@@ -12,6 +12,7 @@ export type Session = {
   player: PlayerProfile;
   createdAt: string;
   code: string;
+  sceneId?: string;
 };
 
 export type TokenType = "player" | "npc" | "monster";
