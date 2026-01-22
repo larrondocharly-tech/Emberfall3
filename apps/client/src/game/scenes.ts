@@ -35,6 +35,18 @@ export const scenes: Scene[] = [
     initialZoom: 0.9,
     initialPanX: 0,
     initialPanY: 0
+  },
+  {
+    id: "frontier",
+    name: "Frontière d’Ember",
+    mapUrl: "/assets/maps/frontier.png",
+    gridSize: 20,
+    gridOffsetX: 0,
+    gridOffsetY: 0,
+    pixelsPerGrid: 64,
+    initialZoom: 0.9,
+    initialPanX: 0,
+    initialPanY: 0
   }
 ];
 
