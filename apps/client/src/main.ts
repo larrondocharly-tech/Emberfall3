@@ -2725,9 +2725,9 @@ let questFlags: Record<string, boolean> = {};
 const adapter: GameAdapter = FEATURE_MULTIPLAYER ? createNetworkAdapter() : createLocalAdapter();
 let gameState = initialState;
 const loadedSave = loadGameState();
-inventoryState = loadedSave.inventory;
-inventoryFlags = loadedSave.flags;
-questFlags = loadedSave.quests;
+inventoryState = loadedSave.inventory ?? defaultInventoryState;
+inventoryFlags = loadedSave.flags ?? {};
+questFlags = loadedSave.quests ?? {};
 ensureNpcTokensForScene(gameState.scene.id);
 let room: Room<GameStateSchema> | null = null;
 let sessionId: string | null = null;
@@ -2830,9 +2830,6 @@ const EXIT_HOTSPOTS: Record<string, ExitHotspot[]> = {
     }
   ]
 };
-let inventoryState: InventoryState = defaultInventoryState;
-let inventoryFlags: Record<string, boolean> = {};
-let questFlags: Record<string, boolean> = {};
 let inventoryPanel: HTMLDivElement | null = null;
 let inventoryList: HTMLDivElement | null = null;
 let inventoryDetail: HTMLDivElement | null = null;
