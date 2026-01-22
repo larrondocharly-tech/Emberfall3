@@ -1623,7 +1623,52 @@ function goToScene(sceneId: string) {
     return;
   }
   applyScene(scene, { resetCamera: true, recenterToken: true });
+  setSessionSceneId(scene.id);
   renderScenesPanel();
+}
+
+function setSessionSceneId(sceneId: string) {
+  if (activeSession) {
+    activeSession = { ...activeSession, sceneId };
+  }
+  if (gameState.session) {
+    gameState = { ...gameState, session: { ...gameState.session, sceneId } };
+  }
+}
+
+function getCurrentSceneId() {
+  return activeSession?.sceneId ?? gameState.scene.id;
+}
+
+function loadScene(sceneId: string, spawn?: { x: number; y: number }) {
+  const scene = scenes.find((entry) => entry.id === sceneId);
+  if (!scene) {
+    return;
+  }
+  applyScene(scene, { resetCamera: true });
+  setSessionSceneId(scene.id);
+  if (spawn) {
+    const playerToken = getTokenById(selectedTokenId) ?? getTokenById("player");
+    if (playerToken) {
+      updateTokenPosition(playerToken.id, spawn);
+      selectToken(playerToken.id);
+    }
+  }
+  renderScenesPanel();
+}
+
+function checkSceneTransition(playerToken: { gridX: number; gridY: number }) {
+  const currentSceneId = getCurrentSceneId();
+  const transition = SCENE_TRANSITIONS.find(
+    (entry) =>
+      entry.fromSceneId === currentSceneId &&
+      entry.at.x === playerToken.gridX &&
+      entry.at.y === playerToken.gridY
+  );
+  if (!transition) {
+    return;
+  }
+  loadScene(transition.toSceneId, transition.spawn);
 }
 
 function tryExitThroughHotspot(hotspot: ExitHotspot) {
@@ -2453,6 +2498,10 @@ function setGameView(session: Session) {
                 }
               }
               applySurfaceToToken(targetToken.id);
+              const updatedToken = getTokenById(targetToken.id);
+              if (updatedToken?.type === "player") {
+                checkSceneTransition({ gridX: updatedToken.x, gridY: updatedToken.y });
+              }
               selectToken(targetToken.id);
               renderGameGrid();
             }
@@ -2617,6 +2666,10 @@ function setGameView(session: Session) {
             }
           }
           applySurfaceToToken(draggingTokenId);
+          const movedToken = getTokenById(draggingTokenId);
+          if (movedToken?.type === "player") {
+            checkSceneTransition({ gridX: movedToken.x, gridY: movedToken.y });
+          }
           draggingTokenId = null;
           draggingTokenStart = null;
           canvasViewport?.releasePointerCapture(event.pointerId);
@@ -2836,6 +2889,12 @@ let isSpellMenuOpen = false;
 let spellMenuListenersReady = false;
 let spellMenuRef: HTMLDivElement | null = null;
 let spellButtonRef: HTMLButtonElement | null = null;
+type SceneTransition = {
+  fromSceneId: string;
+  at: { x: number; y: number };
+  toSceneId: string;
+  spawn: { x: number; y: number };
+};
 type ExitHotspot = {
   id: string;
   x: number;
@@ -2847,6 +2906,15 @@ type ExitHotspot = {
   lockedMessage?: string;
   okMessage?: string;
 };
+
+const SCENE_TRANSITIONS: SceneTransition[] = [
+  {
+    fromSceneId: "tavern",
+    at: { x: 9, y: 2 },
+    toSceneId: "tavern_upstairs",
+    spawn: { x: 5, y: 9 }
+  }
+];
 
 const EXIT_HOTSPOTS: Record<string, ExitHotspot[]> = {
   tavern: [
