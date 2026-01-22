@@ -729,8 +729,15 @@ function appendSystemLog(message: string) {
   systemLog.scrollTop = systemLog.scrollHeight;
 }
 
+function resolveDialogueForNpc(npc: NpcDef) {
+  if (npc.id === "npc_innkeeper" && inventoryFlags.npc_innkeeper_gave_key) {
+    return getDialogueNode("innkeeper_after");
+  }
+  return getDialogueNode(npc.dialogueId);
+}
+
 function openDialogue(npc: NpcDef) {
-  const node = getDialogueNode(npc.dialogueId);
+  const node = resolveDialogueForNpc(npc);
   if (!dialoguePanel || !node) {
     return;
   }
@@ -802,6 +809,7 @@ function applyDialogueChoice(choice: DialogueNode["choices"][number]) {
   if (choice.startQuest) {
     questFlags = { ...questFlags, [choice.startQuest]: true };
     persistSaveState();
+    appendSystemLog("Nouvelle quête: Veiller sur la Frontière d'Ember.");
   }
   closeDialogue();
 }
@@ -823,6 +831,15 @@ function closeSpellMenu(options?: { preserveMode?: boolean }) {
   if (!options?.preserveMode && modeMachine.getMode() === "spell_menu") {
     modeMachine.setMode("idle");
   }
+}
+
+function toggleSpellMenu() {
+  if (isSpellMenuOpen) {
+    closeSpellMenu();
+    return;
+  }
+  modeMachine.setMode("spell_menu");
+  openSpellMenu();
 }
 
 function toggleSpellMenu() {
